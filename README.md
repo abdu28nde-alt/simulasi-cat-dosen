@@ -20,23 +20,22 @@ Mode debug (durasi simulasi 1 menit): centang di **Pengaturan**, atau buka `inde
 | `soal/generator.js` | Generator berbenih: TIU numerik, TIU figural (SVG), SKB Penalaran (data) — jawaban dihitung kode |
 | `soal/soal-twk.js`, `soal-tiu.js`, `soal-tkp.js`, `soal-skb.js` | Bank soal tulisan manual |
 | `soal/soal-twk2.js`, `soal-tkp2.js`, `soal-skb-etika2.js`, `soal-skb-ing2.js`, `soal-skb-psi2.js` | Bank soal tambahan |
-| `soal/materi.js` | Materi ringkas + modul wawancara/microteaching |
+| `soal/materi.js`, `materi-kemenag-fdk.js`, `noncat-fdk.js` | Materi ringkas, modul wawancara/microteaching, bahan PTKIN/FDK |
+| `soal/soal-moderasi.js`, `soal-dakwah-komunikasi.js` | Bank SKB Moderasi Beragama dan Bidang Dakwah & Komunikasi |
+| `soal/perbaikan-mutu.js` | Perbaikan pengecoh dan rujukan (dimuat terakhir) |
+| `sw.js`, `manifest.webmanifest`, `icon*` | PWA (pasang & offline) |
 
 ## Menambah soal
 Tambahkan objek ke salah satu `soal-*.js` dengan format ringkas (lihat komentar di `soal/soal.js`). Validator di console akan memperingatkan bila ada ID ganda, opsi bukan 5, kunci ganda, atau skor skala tidak unik 1–5.
 
 ## Status bank soal
-| Subtes | Jumlah | Target |
-|---|---|---|
-| TWK | 90 | 90 ✅ |
-| TIU | 141 (108 otomatis) | 105 ✅ |
-| TKP | 135 | 135 ✅ |
-| SKB Etika & Tri Dharma | 75 umum + 7 Kemenag | 75 ✅ |
-| SKB Bahasa Inggris | 75 | 75 ✅ |
-| SKB Penalaran | 75 (65 otomatis) | 75 ✅ |
-| SKB Dimensi Psikologi | 75 | 75 ✅ |
+Total 848 soal: TWK 90, TIU 141, TKP 135, SKB Etika 82 (termasuk 7 khusus Kemenag), SKB Bahasa Inggris 75, SKB Penalaran 75, SKB Dimensi Psikologi 75, **SKB Moderasi Beragama 75**, **SKB Bidang Dakwah & Komunikasi 100** (preset UIN SGD – FDK). Riwayat perubahan di CHANGELOG.md, audit soal otomatis di AUDIT-SOAL.md.
 
-Total 673 soal. Sudah diuji: 3 paket SKD dan 3 paket SKB berturut-turut tanpa soal berulang.
+## Alat bantu (Node.js)
+- `node tools/audit-soal.cjs` — audit independen kunci soal otomatis
+- `node tools/cek-sintaks.cjs` — cek sintaks skrip
+- `node tools/ganti-teks.cjs berkas.js peta.json` — ganti teks opsi secara aman
+- `node tools/buat-ikon.cjs` — buat ulang ikon PWA
 
 Soal bertanda `perlu verifikasi` menyangkut aturan yang dapat berubah (mis. Permendiktisaintek 52/2025, MBKM). Cek naskah resmi terbaru.
 

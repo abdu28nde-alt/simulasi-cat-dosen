@@ -1365,6 +1365,10 @@ function grafikBatang(rows) {
 }
 function vHasil(id) {
   const h = HIST.find(x => x.id === id); if (!h) { go("statistik"); return; }
+  /* entri riwayat lama/tidak lengkap: lengkapi nilai bawaan agar tetap dapat ditampilkan */
+  h.per = h.per || {}; h.topik = h.topik || {}; h.qids = h.qids || []; h.ans = h.ans || {}; h.ragu = h.ragu || {}; h.status = h.status || {};
+  if (h.jenis === "SKD" && !h.pg) h.pg = pgUntuk(h.paket) || pgUntuk("skd"); if (!h.pgMode) h.pgMode = "umum";
+  if (h.waktuDetik == null) h.waktuDetik = 0; if (h.durasiDetik == null) h.durasiDetik = 0;
   const subs = Object.keys(h.per), ps = h.peserta || peserta(), skd = h.jenis === "SKD", umum = h.pgMode === "umum";
   const ket = b => b ? '<span class="cat-ok">MEMENUHI</span>' : '<span class="cat-no-ok">TIDAK MEMENUHI</span>';
   let tbl = '<div class="tblwrap"><table class="cat-tbl"><thead><tr><th>Subtes</th><th class="num">Nilai</th><th class="num">Maks</th>' + (skd ? '<th class="num">Ambang Batas</th><th>Keterangan</th>' : "") + '<th class="num">Benar* / Salah / Kosong</th></tr></thead><tbody>';
