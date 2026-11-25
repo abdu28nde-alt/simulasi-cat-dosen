@@ -599,8 +599,11 @@ body.menu-open .side-scrim{display:block}
 <script src="soal/soal-skb-etika2.js"></script>
 <script src="soal/soal-skb-ing2.js"></script>
 <script src="soal/soal-skb-psi2.js"></script>
+<script src="soal/soal-moderasi.js"></script>
+<script src="soal/soal-dakwah-komunikasi.js"></script>
 <script src="soal/perbaikan-mutu.js"></script>
 <script src="soal/materi.js"></script>
+<script src="soal/materi-kemenag-fdk.js"></script>
 <script>
 (function () {
 "use strict";
@@ -614,11 +617,18 @@ const CONFIG = {
   acuanPG: "Acuan: Kepmenpan RB No. 321/2024 (formasi umum). Cek ketentuan terbaru di sscasn.bkn.go.id.",
   skd: { durasiMenit: 100, komposisi: { TWK: 30, TIU: 35, TKP: 45 } },
   mini: { durasiMenit: 50, komposisi: { TWK: 15, TIU: 18, TKP: 23 } },
-  skb: { durasiMenit: 90, komposisi: { "SKB-ETIKA": 25, "SKB-ING": 25, "SKB-NALAR": 25, "SKB-PSI": 25 }, label: "Dapat disesuaikan dengan pengumuman resmi instansi." },
+  skb: { durasiMenit: 90, komposisi: { "SKB-ETIKA": 25, "SKB-ING": 25, "SKB-NALAR": 25, "SKB-PSI": 25 },
+    /* Komposisi bawaan per formasi — PERKIRAAN, wajib disesuaikan dengan pengumuman resmi */
+    preset: {
+      kemdiktisaintek: { "SKB-ETIKA": 25, "SKB-ING": 25, "SKB-NALAR": 25, "SKB-PSI": 25 },
+      kemenag: { "SKB-ETIKA": 20, "SKB-MOD": 30, "SKB-ING": 25, "SKB-NALAR": 25 },
+      "uinsgd-fdk": { "SKB-DAKOM": 40, "SKB-MOD": 30, "SKB-ETIKA": 15, "SKB-ING": 15 }
+    },
+    label: "Sesuaikan dengan pengumuman resmi Kemenag/SSCASN BKN." },
   bobot: { skd: 0.4, skb: 0.6 },
-  targetDetik: { TWK: 50, TIU: 70, TKP: 45, "SKB-ETIKA": 60, "SKB-ING": 75, "SKB-NALAR": 75, "SKB-PSI": 45 },
+  targetDetik: { TWK: 50, TIU: 70, TKP: 45, "SKB-ETIKA": 60, "SKB-ING": 75, "SKB-NALAR": 75, "SKB-PSI": 45, "SKB-MOD": 60, "SKB-DAKOM": 60 },
   targetHarian: 30,
-  targetBank: { TWK: 90, TIU: 105, TKP: 135, "SKB-ETIKA": 75, "SKB-ING": 75, "SKB-NALAR": 75, "SKB-PSI": 75 },
+  targetBank: { TWK: 90, TIU: 105, TKP: 135, "SKB-ETIKA": 75, "SKB-ING": 75, "SKB-NALAR": 75, "SKB-PSI": 75, "SKB-MOD": 75, "SKB-DAKOM": 100 },
   timer: { peringatanMenit: 10 }
 };
 const SUB = {
@@ -628,9 +638,11 @@ const SUB = {
   "SKB-ETIKA": { nama: "Etika & Tri Dharma PT", singkat: "SKB Etika", grup: "SKB" },
   "SKB-ING": { nama: "Literasi Bahasa Inggris", singkat: "SKB Inggris", grup: "SKB" },
   "SKB-NALAR": { nama: "Penalaran & Pemecahan Masalah", singkat: "SKB Penalaran", grup: "SKB" },
-  "SKB-PSI": { nama: "Dimensi Psikologi", singkat: "SKB Psikologi", grup: "SKB" }
+  "SKB-PSI": { nama: "Dimensi Psikologi", singkat: "SKB Psikologi", grup: "SKB" },
+  "SKB-MOD": { nama: "Moderasi Beragama", singkat: "SKB Moderasi", grup: "SKB" },
+  "SKB-DAKOM": { nama: "Kompetensi Bidang Dakwah & Komunikasi", singkat: "SKB Bidang FDK", grup: "SKB" }
 };
-const FORMASI = { kemdiktisaintek: "Dosen S2 — Kemdiktisaintek (PTN umum)", kemenag: "Dosen S2 — Kemenag (PTKIN)" };
+const FORMASI = { kemenag: "Dosen S2 — Kemenag (PTKIN)", "uinsgd-fdk": "UIN Sunan Gunung Djati Bandung – Fakultas Dakwah dan Komunikasi", kemdiktisaintek: "Dosen S2 — Kemdiktisaintek (PTN umum)" };
 
 /* ===================== PENYIMPANAN ===================== */
 const PFX = "catdosen_";
@@ -682,6 +694,14 @@ if (OV.pgKhusus) CONFIG.passingGrade.khusus.total = OV.pgKhusus;
 if (OV.skbDurasi) CONFIG.skb.durasiMenit = OV.skbDurasi;
 if (OV.skbKomposisi) Object.assign(CONFIG.skb.komposisi, OV.skbKomposisi);
 if (OV.targetHarian) CONFIG.targetHarian = OV.targetHarian;
+if (OV.bobot && OV.bobot.skd >= 0 && OV.bobot.skb >= 0 && OV.bobot.skd + OV.bobot.skb > 0) CONFIG.bobot = { skd: OV.bobot.skd / (OV.bobot.skd + OV.bobot.skb), skb: OV.bobot.skb / (OV.bobot.skd + OV.bobot.skb) };
+/* Komposisi SKB untuk formasi aktif: pengaturan pengguna > preset formasi > bawaan */
+function skbKomposisi(f) {
+  f = f || SET.formasi;
+  const base = (OV.skbByFormasi || {})[f] || CONFIG.skb.preset[f] || CONFIG.skb.komposisi, out = {};
+  Object.keys(base).forEach(k => { if (SUB[k] && base[k] > 0) out[k] = base[k]; });
+  return out;
+}
 
 let PROG = LS.get("progress", {});
 let SALAH = new Set(LS.get("salah", []));
@@ -698,7 +718,8 @@ const BYID = {}; BANK.forEach(q => { BYID[q.id] = q; });
 const MASALAH = window.validasiBank ? window.validasiBank(BANK) : [];
 const MATERI = window.MATERI || [];
 const NONCAT = window.NONCAT || {};
-function cocok(q) { return q.formasi.indexOf(SET.formasi) >= 0; }
+/* Preset UIN SGD–FDK mencakup seluruh soal Kemenag ditambah soal bidang Dakwah & Komunikasi */
+function cocok(q) { const ok = SET.formasi === "uinsgd-fdk" ? ["uinsgd-fdk", "kemenag"] : [SET.formasi]; return q.formasi.some(f => ok.indexOf(f) >= 0); }
 function pool(sub) { return BANK.filter(q => q.subtes === sub && cocok(q)); }
 function topikList(sub) { const s = []; pool(sub).forEach(q => { if (s.indexOf(q.subtopik) < 0) s.push(q.subtopik); }); return s; }
 function skorOpsi(q, k) { if (!k) return 0; const o = q.opsi.find(x => x.kode === k); return o ? o.skor : 0; }
@@ -1003,7 +1024,7 @@ let LAT = Object.assign({ subtes: null, topik: "*", jumlah: 10, kes: "campur" },
 let SES = LS.get("sesi", null);
 function vLatihanSetup() {
   if (LAT.subtes && !SUB[LAT.subtes]) LAT.subtes = null;
-  const subCards = Object.keys(SUB).map(k => '<button class="pick' + (LAT.subtes === k ? " on" : "") + '" data-act="lat-sub" data-v="' + k + '"><b>' + SUB[k].singkat + "</b><small>" + SUB[k].nama + '</small><span class="pill">' + pool(k).length + " soal</span></button>").join("");
+  const subCards = Object.keys(SUB).filter(k => pool(k).length).map(k => '<button class="pick' + (LAT.subtes === k ? " on" : "") + '" data-act="lat-sub" data-v="' + k + '"><b>' + SUB[k].singkat + "</b><small>" + SUB[k].nama + '</small><span class="pill">' + pool(k).length + " soal</span></button>").join("");
   let rest = "";
   if (LAT.subtes) {
     const tops = topikList(LAT.subtes);
@@ -1072,7 +1093,7 @@ const KODE5 = ["A", "B", "C", "D", "E"];
 function paketDef(kode) {
   if (kode === "skd") return { kode, judul: "Simulasi SKD Penuh", jenis: "SKD", komposisi: CONFIG.skd.komposisi, durasi: CONFIG.skd.durasiMenit };
   if (kode === "mini") return { kode, judul: "Mini Tryout SKD", jenis: "SKD", komposisi: CONFIG.mini.komposisi, durasi: CONFIG.mini.durasiMenit };
-  if (kode === "skb") return { kode, judul: "Simulasi SKB Dosen", jenis: "SKB", komposisi: CONFIG.skb.komposisi, durasi: CONFIG.skb.durasiMenit };
+  if (kode === "skb") return { kode, judul: "Simulasi SKB Dosen", jenis: "SKB", komposisi: skbKomposisi(), durasi: CONFIG.skb.durasiMenit };
   return null;
 }
 function jumlahSoal(P) { return Object.values(P.komposisi).reduce((a, b) => a + b, 0); }
@@ -1128,7 +1149,7 @@ function vKonfirmasi(kode) {
     r.push("TWK dan TIU: jawaban benar bernilai <b>5</b>, salah atau kosong <b>0</b>. TKP: setiap opsi bernilai <b>1–5</b>, kosong 0.");
     r.push(SET.pgMode === "umum" ? "Nilai ambang batas (passing grade): <b>TWK " + pg.TWK + ", TIU " + pg.TIU + ", TKP " + pg.TKP + "</b>" + (kode === "mini" ? " (diskalakan untuk mini tryout)" : "") + ". Ketiganya harus terpenuhi." : "Formasi khusus: nilai kumulatif minimal <b>" + pg.total + "</b>.");
   } else {
-    r.push("Etika & Tri Dharma, Bahasa Inggris, Penalaran: benar 5, salah 0. Dimensi Psikologi: setiap opsi bernilai 1–5.");
+    r.push("Subtes pilihan ganda: benar 5, salah 0. Dimensi Psikologi (jika diujikan): setiap opsi bernilai 1–5. " + esc(CONFIG.skb.label));
     r.push("SKB tidak memakai passing grade; hasil ditampilkan sebagai simulasi nilai akhir 40% SKD + 60% SKB.");
   }
   r.push("Klik opsi untuk menjawab. Jawaban dapat diubah selama waktu masih tersedia. Gunakan <b>Ragu-ragu</b> untuk menandai soal.");
@@ -1372,8 +1393,8 @@ function vStatistik() {
 function vMateri() {
   const grup = []; MATERI.forEach(m => { if (grup.indexOf(m.grup) < 0) grup.push(m.grup); });
   app.innerHTML = "<h1>Materi Ringkas</h1><p class=\"muted\">Rangkuman materi, rumus cepat TIU, dan dasar hukum. Selalu cek ketentuan terbaru pada sumber resmi.</p>" +
-    grup.filter(g => g !== "Kemenag" || SET.formasi === "kemenag").map(g => "<h2>" + esc(g) + "</h2>" + MATERI.filter(m => m.grup === g).map(m => '<details class="card"><summary>' + esc(m.judul) + '</summary><div class="tblwrap">' + m.isi + "</div></details>").join("")).join("") +
-    (SET.formasi !== "kemenag" ? '<p class="muted"><small>Materi Moderasi Beragama & PTKIN tampil bila formasi Kemenag dipilih.</small></p>' : "");
+    grup.filter(g => (g !== "Kemenag" || SET.formasi !== "kemdiktisaintek") && (g !== "Bidang FDK" || SET.formasi === "uinsgd-fdk")).map(g => "<h2>" + esc(g) + "</h2>" + MATERI.filter(m => m.grup === g).map(m => '<details class="card"><summary>' + esc(m.judul) + '</summary><div class="tblwrap">' + m.isi + "</div></details>").join("")).join("") +
+    (SET.formasi !== "uinsgd-fdk" ? '<p class="muted"><small>Materi Moderasi Beragama tampil untuk formasi Kemenag; materi Bidang Dakwah & Komunikasi tampil untuk preset UIN SGD – FDK.</small></p>' : "");
 }
 
 /* ===================== SKB NON-CAT ===================== */
@@ -1420,7 +1441,9 @@ function vPengaturan() {
     '<label class="row"><input type="checkbox" data-chg="stopwatch"' + (SET.stopwatch ? " checked" : "") + '> Stopwatch per soal di Mode Latihan</label><label class="row"><input type="checkbox" data-chg="debug"' + (SET.debug ? " checked" : "") + "> Mode debug (durasi simulasi 1 menit)</label>" +
     '<h3>Simulasi</h3><label class="row"><input type="checkbox" data-chg="kunciSelesai"' + (SET.kunciSelesai ? " checked" : "") + '> Tombol “Selesai Ujian” baru aktif setelah ½ waktu</label><label class="row"><input type="checkbox" data-chg="wakeLock"' + (SET.wakeLock ? " checked" : "") + '> Cegah layar mati selama ujian (jika didukung)</label><label class="row"><input type="checkbox" data-chg="getar"' + (SET.getar ? " checked" : "") + "> Getar singkat saat memilih jawaban (Android)</label></div>" +
     '<div class="card"><h3>Nilai ambang batas & SKB</h3><small>' + esc(CONFIG.acuanPG) + '</small><div class="row" style="margin-top:8px"><label class="field">TWK<input type="number" data-cfg="pgTWK" value="' + pg.umum.TWK + '" style="width:90px"></label><label class="field">TIU<input type="number" data-cfg="pgTIU" value="' + pg.umum.TIU + '" style="width:90px"></label><label class="field">TKP<input type="number" data-cfg="pgTKP" value="' + pg.umum.TKP + '" style="width:90px"></label><label class="field">Khusus (total)<input type="number" data-cfg="pgKhusus" value="' + pg.khusus.total + '" style="width:110px"></label></div>' +
-    '<div class="row" style="margin-top:8px"><label class="field">Durasi SKB (menit)<input type="number" data-cfg="skbDurasi" value="' + CONFIG.skb.durasiMenit + '" style="width:110px"></label>' + Object.keys(CONFIG.skb.komposisi).map(k => '<label class="field">' + SUB[k].singkat.replace("SKB ", "") + '<input type="number" data-cfg="skb_' + k + '" value="' + CONFIG.skb.komposisi[k] + '" style="width:80px"></label>').join("") + '<label class="field">Target harian<input type="number" data-cfg="targetHarian" value="' + CONFIG.targetHarian + '" style="width:100px"></label></div>' +
+    '<div class="row" style="margin-top:8px"><label class="field">Durasi SKB (menit)<input type="number" min="1" data-cfg="skbDurasi" value="' + CONFIG.skb.durasiMenit + '" style="width:110px"></label><label class="field">Target harian<input type="number" min="1" data-cfg="targetHarian" value="' + CONFIG.targetHarian + '" style="width:100px"></label></div>' +
+    '<h3 style="margin-top:14px">Komposisi SKB — ' + esc(FORMASI[SET.formasi]) + '</h3><p class="note">Sesuaikan dengan pengumuman resmi Kemenag/SSCASN BKN. Isi 0 untuk subtes yang tidak diujikan.</p><div class="row">' + Object.keys(SUB).filter(k => SUB[k].grup === "SKB").map(k => '<label class="field">' + esc(SUB[k].singkat.replace("SKB ", "")) + '<input type="number" min="0" data-cfg="skb_' + k + '" value="' + (skbKomposisi()[k] || 0) + '" style="width:80px"></label>').join("") + '</div>' +
+    '<h3 style="margin-top:14px">Bobot nilai akhir</h3><p class="note">Bawaan 40% SKD + 60% SKB — verifikasi di pengumuman resmi.</p><div class="row"><label class="field">SKD (%)<input type="number" min="0" max="100" data-cfg="bobotSkd" value="' + Math.round(CONFIG.bobot.skd * 100) + '" style="width:90px"></label><label class="field">SKB (%)<input type="number" min="0" max="100" data-cfg="bobotSkb" value="' + Math.round(CONFIG.bobot.skb * 100) + '" style="width:90px"></label></div>' +
     '<p class="note">Nilai ambang batas formasi khusus (cumlaude/diaspora) dan komposisi SKB perlu disesuaikan dengan pengumuman resmi.</p><div class="actions"><button class="btn primary" data-act="cfg-simpan">Simpan konfigurasi</button><button class="btn" data-act="cfg-reset">Kembalikan bawaan</button></div></div></div>' +
     '<h2>Data & progres</h2><div class="card"><div class="actions"><button class="btn" data-act="ekspor">⬇️ Ekspor progres (JSON)</button><label class="btn">⬆️ Impor progres<input type="file" accept="application/json,.json" data-chg="impor" hidden></label><button class="btn danger" data-act="reset-all">Hapus semua data</button></div><small>Ekspor/impor untuk memindahkan progres antarperangkat.</small></div>' +
     '<h2>Bank soal</h2><div class="card"><div class="tblwrap"><table class="tbl"><thead><tr><th>Subtes</th><th>Jumlah (semua formasi)</th><th>Target</th><th>Status</th></tr></thead><tbody>' + counts + "</tbody></table></div>" +
@@ -1499,8 +1522,12 @@ const ACT = {
   "print"() { window.print(); },
   "cfg-simpan"() {
     const v = k => { const el = document.querySelector('[data-cfg="' + k + '"]'); const n = el ? parseInt(el.value, 10) : NaN; return isNaN(n) ? undefined : n; };
-    const ov = { pg: { TWK: v("pgTWK"), TIU: v("pgTIU"), TKP: v("pgTKP") }, pgKhusus: v("pgKhusus"), skbDurasi: v("skbDurasi"), targetHarian: v("targetHarian"), skbKomposisi: {} };
-    Object.keys(CONFIG.skb.komposisi).forEach(k => { const n = v("skb_" + k); if (n != null && n > 0) ov.skbKomposisi[k] = n; });
+    const ov = Object.assign({}, OV, { pg: { TWK: v("pgTWK"), TIU: v("pgTIU"), TKP: v("pgTKP") }, pgKhusus: v("pgKhusus"), skbDurasi: v("skbDurasi"), targetHarian: v("targetHarian") });
+    const kom = {}; Object.keys(SUB).filter(k => SUB[k].grup === "SKB").forEach(k => { const n = v("skb_" + k); if (n != null && n >= 0) kom[k] = n; });
+    if (!Object.values(kom).some(n => n > 0)) { toast("Komposisi SKB tidak boleh kosong semua."); return; }
+    ov.skbByFormasi = Object.assign({}, OV.skbByFormasi || {}); ov.skbByFormasi[SET.formasi] = kom;
+    const bs = v("bobotSkd"), bk = v("bobotSkb"); if (bs != null && bk != null && bs + bk > 0) ov.bobot = { skd: bs, skb: bk };
+    const tg = {}; ["TWK", "TIU", "TKP"].forEach(k => { const n = v("target" + k); if (n != null) tg[k] = n; }); const tskb = v("targetSKB"); if (tskb != null) tg.SKB = tskb; ov.target = tg;
     LS.set("config", ov); toast("Konfigurasi disimpan."); setTimeout(() => location.reload(), 600);
   },
   "cfg-reset"() { LS.del("config"); toast("Konfigurasi bawaan dipulihkan."); setTimeout(() => location.reload(), 600); },
