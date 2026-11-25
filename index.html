@@ -1007,6 +1007,7 @@ function vHome() {
       '<div><div class="num">' + totalSoal + '</div><div class="lbl">Soal dikerjakan</div></div>' +
       '<div><div class="num">' + streak() + '</div><div class="lbl">Streak hari (target ' + CONFIG.targetHarian + " soal)</div></div></div>" +
       '<div class="prog-links">' + (last ? '<a class="btn sm" href="#/hasil/' + last.id + '">Lihat hasil terakhir</a>' : "") + (weak ? '<button class="btn sm" data-act="latih-topik" data-s="' + esc(weak.subtes) + '" data-t="' + esc(weak.subtopik) + '">Latih subtopik terlemah: ' + esc(weak.subtopik) + "</button>" : "") + (SALAH.size ? '<button class="btn sm" data-act="latih-salah">Latih ulang ' + SALAH.size + " soal salah</button>" : "") + "</div></div></section>" +
+    '<section class="sec" style="padding:24px 0 0"><div class="wrap rv-me" style="display:grid;gap:16px">' + rencanaHtml() + srsKartuHtml() + '</div></section>' +
     '<section class="sec"><div class="wrap"><h2 class="sec-title rv-me">Kenapa Latihan di <span class="o2">Sini?</span></h2><p class="sec-sub rv-me">Dirancang khusus untuk calon dosen ASN: alur, penilaian, dan materi mengikuti ketentuan seleksi.</p><div class="why">' +
       why("monitor", "teal", "Realistis", "Layar ujian, timer, grid nomor soal, dan tombol ragu-ragu dibuat menyerupai CAT di lokasi tes.") +
       why("target", "or", "Terukur", "Skor dihitung dengan aturan SKD (TWK/TIU benar 5, TKP 1–5) dan dibandingkan dengan nilai ambang batas.") +
@@ -1045,7 +1046,7 @@ function vLatihanSetup() {
   }
   app.innerHTML = "<h1>Mode Latihan</h1><p class=\"muted\">Setelah memilih jawaban, benar/salah dan pembahasan langsung muncul. Formasi: " + esc(FORMASI[SET.formasi]) + ".</p>" +
     (SES && SES.i < SES.ids.length ? '<div class="banner warn"><div>Sesi latihan sebelumnya belum selesai (' + (SES.i + 1) + "/" + SES.ids.length + ').</div><a class="btn primary" href="#/sesi">Lanjutkan</a></div>' : "") +
-    '<div class="row noprint">' + (SALAH.size ? '<button class="btn" data-act="latih-salah">🔁 Latih ulang soal salah (' + SALAH.size + ")</button>" : "") + (TANDAI.size ? '<button class="btn" data-act="latih-tandai">🔖 Soal ditandai (' + TANDAI.size + ")</button>" : "") + "</div>" +
+    srsKartuHtml() + '<div class="row noprint" style="margin-top:12px">' + (SALAH.size ? '<button class="btn" data-act="latih-salah">🔁 Latih ulang soal salah (' + SALAH.size + ")</button>" : "") + (TANDAI.size ? '<button class="btn" data-act="latih-tandai">🔖 Soal ditandai (' + TANDAI.size + ")</button>" : "") + "</div>" +
     '<h2>1. Pilih subtes</h2><div class="picks">' + subCards + "</div>" + rest;
 }
 function mulaiSesi(ids, judul) {
@@ -1418,6 +1419,81 @@ function vStatistik() {
     '<h2>Riwayat simulasi</h2><div class="card">' + (HIST.length ? '<div class="tblwrap"><table class="tbl"><thead><tr><th>Tanggal</th><th>Paket</th><th>Skor</th><th>Status</th><th></th></tr></thead><tbody>' + HIST.map(x => "<tr><td>" + fmtTgl(x.ts) + "</td><td>" + esc(x.judul) + (x.debug ? " <small>(debug)</small>" : "") + "</td><td>" + x.total + "/" + x.maks + "</td><td>" + (x.jenis === "SKD" ? (x.lulus ? '<span class="pill ok">Lulus</span>' : '<span class="pill bad">Belum</span>') : '<span class="pill">SKB</span>') + '</td><td class="row"><a class="btn sm" href="#/hasil/' + x.id + '">Hasil</a><a class="btn sm" href="#/review/' + x.id + '">Pembahasan</a></td></tr>').join("") + "</tbody></table></div>" : '<p class="muted">Belum ada riwayat.</p>') + "</div>";
 }
 
+/* ===================== SISTEM BELAJAR (Fase 4) ===================== */
+/* 4.1 Pengulangan berkala. Soal masuk antrean bila salah, ditandai ragu-ragu (simulasi), atau benar tetapi lambat (> 70 dtk).
+   Jadwal ulang 1 → 3 → 7 → 14 hari; keluar setelah benar 3 kali berturut-turut dengan waktu normal (≤ target subtes). */
+const SRS_INTERVAL = [1, 3, 7, 14];
+let SRS = LS.get("srs", {});
+function tambahHari(n) { const d = new Date(); d.setDate(d.getDate() + n); return tgl(d); }
+function srsCatat(q, benar, detik, info) {
+  const id = q.id, e = SRS[id], target = CONFIG.targetDetik[q.subtes] || 70, d = detik || 0;
+  const lambat = d > 70, normal = !d || d <= target;
+  if (!benar || info.ragu || lambat) {
+    if (!benar || info.ragu || lambat) SRS[id] = { lv: 0, due: tambahHari(1), st: 0, asal: !benar ? "salah" : info.ragu ? "ragu" : "lambat" };
+  } else if (e) {
+    if (normal) { e.st = (e.st || 0) + 1; e.lv = Math.min((e.lv || 0) + 1, 3); e.due = tambahHari(SRS_INTERVAL[e.lv]); if (e.st >= 3) delete SRS[id]; }
+    else { e.st = 0; e.due = tambahHari(SRS_INTERVAL[e.lv || 0]); }
+  }
+  LS.set("srs", SRS);
+}
+function srsJatuhTempo() { const h = tgl(); return Object.keys(SRS).filter(id => BYID[id] && cocok(BYID[id]) && SRS[id].due <= h); }
+function srsKartuHtml() {
+  const due = srsJatuhTempo(), total = Object.keys(SRS).filter(id => BYID[id] && cocok(BYID[id])).length;
+  const asal = { salah: 0, ragu: 0, lambat: 0 }; Object.keys(SRS).forEach(id => { if (BYID[id] && cocok(BYID[id])) asal[SRS[id].asal] = (asal[SRS[id].asal] || 0) + 1; });
+  return '<div class="card"><div class="spread"><div><b>Pengulangan berkala</b><br><small>' + due.length + " soal jatuh tempo hari ini · " + total + " soal dalam antrean (salah " + asal.salah + ", ragu " + asal.ragu + ", lambat " + asal.lambat + ")</small></div>" +
+    (due.length ? '<button class="btn primary" data-act="srs-mulai">Mulai pengulangan (' + Math.min(due.length, 30) + ")</button>" : '<span class="pill ok">Tidak ada yang jatuh tempo</span>') +
+    "</div><small>Jadwal 1 → 3 → 7 → 14 hari. Soal keluar dari antrean setelah benar 3 kali berturut-turut dengan waktu normal.</small></div>";
+}
+
+/* 4.2 Tanggal ujian + rencana belajar harian */
+function sisaHari() { if (!SET.tanggalUjian) return null; const t = new Date(SET.tanggalUjian + "T00:00:00"), n = new Date(); n.setHours(0, 0, 0, 0); return Math.round((t - n) / 86400000); }
+function rencanaHariIni() {
+  const target = CONFIG.targetHarian, rencana = [], due = srsJatuhTempo().length;
+  let sisa = target;
+  if (due) { const n = Math.min(due, Math.ceil(target / 3)); rencana.push({ jenis: "srs", n, label: "Pengulangan berkala" }); sisa -= n; }
+  const lemah = terlemah(3).filter(t => pool(t.subtes).length && pool(t.subtes).some(q => q.subtopik === t.subtopik)).slice(0, 3);
+  let kandidat = lemah.map(t => ({ sub: t.subtes, top: t.subtopik, bobot: 1.2 - t.b / t.n }));
+  if (kandidat.length < 3) {
+    const komp = Object.assign({}, CONFIG.skd.komposisi, skbKomposisi());
+    Object.keys(komp).filter(s => pool(s).length).forEach(s => { if (kandidat.length >= 3) return; const tops = topikList(s).filter(tp => !Object.keys(PROG).some(id => BYID[id] && BYID[id].subtopik === tp)); if (tops.length && !kandidat.some(k => k.sub === s)) kandidat.push({ sub: s, top: tops[0], bobot: 0.6 }); });
+  }
+  const tot = kandidat.reduce((a, k) => a + k.bobot, 0) || 1;
+  kandidat.forEach((k, i) => { const n = i === kandidat.length - 1 ? sisa - rencana.filter(r => r.jenis === "topik").reduce((a, r) => a + r.n, 0) : Math.max(3, Math.round(sisa * k.bobot / tot)); if (n > 0) rencana.push({ jenis: "topik", sub: k.sub, top: k.top, n }); });
+  return rencana;
+}
+function rencanaHtml() {
+  const sh = sisaHari(), rencana = rencanaHariIni(), akhirSkd = HIST.find(h => h.paket === "skd");
+  const perluSim = !akhirSkd || (Date.now() - akhirSkd.ts) > 7 * 86400000;
+  let h = '<div class="card"><div class="spread"><b>Rencana belajar hari ini</b>' + (sh == null ? '<a class="btn sm" href="#/pengaturan">Atur tanggal ujian</a>' : '<span class="pill ' + (sh <= 14 ? "warn" : "ok") + '">' + (sh > 0 ? sh + " hari menuju ujian" : sh === 0 ? "Hari ujian" : "Tanggal ujian sudah lewat") + "</span>") + "</div>";
+  h += '<ul style="padding-left:18px;margin:10px 0">' + rencana.map(r => r.jenis === "srs" ? '<li>' + r.n + ' soal pengulangan berkala <button class="btn sm" data-act="srs-mulai">Mulai</button></li>' : "<li>" + r.n + " soal " + esc(SUB[r.sub].singkat) + " · " + esc(r.top) + ' <button class="btn sm" data-act="latih-topik" data-s="' + esc(r.sub) + '" data-t="' + esc(r.top) + '" data-n="' + r.n + '">Latih</button></li>').join("") + "</ul>";
+  h += "<small>Target harian " + CONFIG.targetHarian + " soal dibagi ke pengulangan berkala dan subtopik terlemah (makin rendah akurasi, makin banyak porsinya).</small>";
+  if (perluSim) h += '<p class="note" style="margin-top:10px">📅 Waktunya simulasi SKD penuh minggu ini' + (akhirSkd ? " (terakhir " + fmtTgl(akhirSkd.ts) + ")" : "") + '. <a href="#/simulasi">Mulai simulasi</a></p>';
+  if (sh != null && sh > 0 && sh <= 14) h += '<p class="note" style="margin-top:8px">⏳ Dua minggu terakhir: lakukan simulasi penuh 2 kali seminggu dan prioritaskan pengulangan berkala.</p>';
+  return h + "</div>";
+}
+
+/* 4.3 Dashboard kesiapan */
+function kesiapanHtml() {
+  const skdSim = HIST.filter(h => h.jenis === "SKD" && h.split).slice(0, 3), skbSim = HIST.filter(h => h.jenis === "SKB" && h.split).slice(0, 3);
+  function baris(list, subs, maks) {
+    return subs.map(s => {
+      let sk = 0, mk = 0, n = 0; list.forEach(h => { const sp = h.split[s]; if (sp && sp.baru.maks) { sk += sp.baru.skor / sp.baru.maks; mk++; n += sp.baru.n; } });
+      if (!mk) return { s, est: null };
+      const p = sk / mk; return { s, p, est: Math.round(p * maks(s)), n, sims: mk };
+    });
+  }
+  const pg = CONFIG.passingGrade.umum;
+  const rS = baris(skdSim, ["TWK", "TIU", "TKP"], s => MAKS_SKD[s]);
+  const komp = skbKomposisi(), rB = baris(skbSim, Object.keys(komp), s => komp[s] * 5);
+  const sel = r => r.est == null ? '<td colspan="3" class="muted">belum ada data soal baru</td>' : "<td><b>" + r.est + "</b></td><td>" + Math.round(r.p * 100) + "%</td><td>" + r.n + " soal · " + r.sims + " sim</td>";
+  let h = '<h2>Dashboard kesiapan</h2><div class="card"><div class="tblwrap"><table class="tbl"><thead><tr><th>Subtes</th><th>Estimasi skor</th><th>Rata-rata % soal baru</th><th>Dasar data</th><th>Ambang / target</th><th>Status</th></tr></thead><tbody>' +
+    rS.map(r => { const ok = r.est != null && r.est >= pg[r.s], tg = CONFIG.target[r.s]; return "<tr><td>" + r.s + "</td>" + sel(r) + "<td>" + pg[r.s] + " / " + tg + "</td><td>" + (r.est == null ? "—" : ok ? (r.est >= tg ? '<span class="pill ok">Siap</span>' : '<span class="pill ok">Lulus ambang</span>') : '<span class="pill bad">Kurang ' + (pg[r.s] - r.est) + "</span>") + "</td></tr>"; }).join("") +
+    rB.map(r => "<tr><td>" + esc(SUB[r.s].singkat) + "</td>" + sel(r) + "<td>— (ranking)</td><td>" + (r.est == null ? "—" : Math.round(r.p * 100) >= 70 ? '<span class="pill ok">Baik</span>' : '<span class="pill warn">Perlu latihan</span>') + "</td></tr>").join("") +
+    "</tbody></table></div>" +
+    '<p class="muted"><small><b>Rumus:</b> estimasi = rata-rata (skor soal baru ÷ skor maksimum soal baru) pada maksimal 3 simulasi terakhir × nilai maksimum subtes (TWK 150, TIU 175, TKP 225; SKB = jumlah soal × 5). Soal ulangan diabaikan agar tidak menggelembungkan estimasi. Estimasi kurang andal bila dasar data &lt; 3 simulasi atau sedikit soal baru.</small></p></div>';
+  return h;
+}
+
 /* ===================== ANALISIS PENENTU PERINGKAT (Fase 3) ===================== */
 const MAKS_SKD = { TWK: 150, TIU: 175, TKP: 225 };
 const ASPEK_TKP = { "Pelayanan Publik": "Berorientasi Pelayanan", "Jejaring Kerja": "Kolaboratif", "Sosial Budaya": "Harmonis", "Teknologi Informasi dan Komunikasi": "Adaptif", "Profesionalisme": "Kompeten & Akuntabel", "Antiradikalisme": "Loyal" };
@@ -1474,7 +1550,7 @@ function statistikLanjutHtml() {
   const skd = KALK.skd != null ? KALK.skd : (lastSkd ? lastSkd.total : 0);
   const skb = KALK.skb != null ? KALK.skb : (lastSkb ? lastSkb.total : 0), skbMaks = KALK.skbMaks != null ? KALK.skbMaks : (lastSkb ? lastSkb.maks : 500);
   const skd100 = Math.min(100, skd / 550 * 100), skb100 = skbMaks ? Math.min(100, skb / skbMaks * 100) : 0, akhir = CONFIG.bobot.skd * skd100 + CONFIG.bobot.skb * skb100;
-  let h = '<h2>Kalkulator nilai akhir</h2><div class="card"><div class="row">' +
+  let h = '<h2>Rencana belajar & pengulangan</h2>' + rencanaHtml() + srsKartuHtml() + '<h2>Kalkulator nilai akhir</h2><div class="card"><div class="row">' +
     '<label class="field">Nilai SKD (0–550)<input type="number" min="0" max="550" inputmode="numeric" data-chg="kalk" data-k="skd" value="' + skd + '" style="width:120px"></label>' +
     '<label class="field">Nilai SKB<input type="number" min="0" inputmode="numeric" data-chg="kalk" data-k="skb" value="' + skb + '" style="width:120px"></label>' +
     '<label class="field">Maks SKB<input type="number" min="1" inputmode="numeric" data-chg="kalk" data-k="skbMaks" value="' + skbMaks + '" style="width:120px"></label></div>' +
@@ -1553,7 +1629,7 @@ function vPengaturan() {
   const pg = CONFIG.passingGrade;
   const counts = Object.keys(SUB).map(k => { const n = BANK.filter(q => q.subtes === k).length, g = BANK.filter(q => q.subtes === k && q.generated).length; return "<tr><td>" + SUB[k].nama + "</td><td>" + n + (g ? " <small>(" + g + " otomatis)</small>" : "") + "</td><td>" + CONFIG.targetBank[k] + "</td><td>" + (n >= CONFIG.targetBank[k] ? '<span class="pill ok">Tercapai</span>' : '<span class="pill warn">' + pct(n, CONFIG.targetBank[k]) + "%</span>") + "</td></tr>"; }).join("");
   app.innerHTML = "<h1>Pengaturan</h1>" +
-    '<div class="grid2"><div class="card"><h3>Umum</h3><label class="field">Formasi ' + formasiSelect() + '</label><br><label class="field">Tema<select data-chg="tema"><option value="light"' + (SET.tema === "light" ? " selected" : "") + '>Terang (bawaan)</option><option value="auto"' + (SET.tema === "auto" ? " selected" : "") + '>Ikuti sistem</option><option value="dark"' + (SET.tema === "dark" ? " selected" : "") + ">Gelap</option></select></label><br>" +
+    '<div class="grid2"><div class="card"><h3>Umum</h3><label class="field">Formasi ' + formasiSelect() + '</label><br><label class="field">Tema<select data-chg="tema"><option value="light"' + (SET.tema === "light" ? " selected" : "") + '>Terang (bawaan)</option><option value="auto"' + (SET.tema === "auto" ? " selected" : "") + '>Ikuti sistem</option><option value="dark"' + (SET.tema === "dark" ? " selected" : "") + ">Gelap</option></select></label><br>" + '<label class="field">Tanggal ujian (SKD)<input type="date" data-chg="tanggalUjian" value="' + esc(SET.tanggalUjian || "") + '" style="max-width:200px"></label><br>' +
     '<label class="row"><input type="checkbox" data-chg="stopwatch"' + (SET.stopwatch ? " checked" : "") + '> Stopwatch per soal di Mode Latihan</label><label class="row"><input type="checkbox" data-chg="debug"' + (SET.debug ? " checked" : "") + "> Mode debug (durasi simulasi 1 menit)</label>" +
     '<h3>Simulasi</h3><label class="row"><input type="checkbox" data-chg="kunciSelesai"' + (SET.kunciSelesai ? " checked" : "") + '> Tombol “Selesai Ujian” baru aktif setelah ½ waktu</label><label class="row"><input type="checkbox" data-chg="wakeLock"' + (SET.wakeLock ? " checked" : "") + '> Cegah layar mati selama ujian (jika didukung)</label><label class="row"><input type="checkbox" data-chg="getar"' + (SET.getar ? " checked" : "") + "> Getar singkat saat memilih jawaban (Android)</label></div>" +
     '<div class="card"><h3>Nilai ambang batas & SKB</h3><small>' + esc(CONFIG.acuanPG) + '</small><div class="row" style="margin-top:8px"><label class="field">TWK<input type="number" data-cfg="pgTWK" value="' + pg.umum.TWK + '" style="width:90px"></label><label class="field">TIU<input type="number" data-cfg="pgTIU" value="' + pg.umum.TIU + '" style="width:90px"></label><label class="field">TKP<input type="number" data-cfg="pgTKP" value="' + pg.umum.TKP + '" style="width:90px"></label><label class="field">Khusus (total)<input type="number" data-cfg="pgKhusus" value="' + pg.khusus.total + '" style="width:110px"></label></div>' +
@@ -1584,7 +1660,7 @@ const ACT = {
   "lat-sub"(el) { LAT.subtes = el.dataset.v; LAT.topik = "*"; LS.set("latSetup", LAT); render(true); },
   "lat-set"(el) { LAT[el.dataset.k] = el.dataset.k === "jumlah" && el.dataset.v !== "all" ? +el.dataset.v : el.dataset.v; LS.set("latSetup", LAT); render(true); },
   "lat-mulai"() { mulaiSesi(pilihLatihan(), "Latihan " + SUB[LAT.subtes].singkat + (LAT.topik !== "*" ? " · " + LAT.topik : "")); },
-  "latih-topik"(el) { LAT.subtes = el.dataset.s; LAT.topik = el.dataset.t; LAT.kes = "campur"; LAT.jumlah = 10; LS.set("latSetup", LAT); mulaiSesi(pilihLatihan(), "Latihan " + SUB[LAT.subtes].singkat + " · " + LAT.topik); },
+  "latih-topik"(el) { LAT.subtes = el.dataset.s; LAT.topik = el.dataset.t; LAT.kes = "campur"; LAT.jumlah = el.dataset.n ? +el.dataset.n : 10; LS.set("latSetup", LAT); mulaiSesi(pilihLatihan(), "Latihan " + SUB[LAT.subtes].singkat + " · " + LAT.topik); },
   "latih-salah"() { mulaiSesi(acak([...SALAH].filter(id => BYID[id] && cocok(BYID[id]))).slice(0, 30), "Latih ulang soal salah"); },
   "latih-tandai"() { mulaiSesi(acak([...TANDAI].filter(id => BYID[id] && cocok(BYID[id]))), "Soal yang ditandai"); },
   "lat-jawab"(el) {
@@ -1614,6 +1690,7 @@ const ACT = {
   "u-tab"(el) { NAVTAB = el.dataset.v; gridUjian(); const t = document.querySelector('#exam-side [data-act="u-tab"][data-v="' + el.dataset.v + '"]'); if (t) t.focus({ preventScroll: true }); },
   "peserta-ok"(el) { const i = $("#ps-nama"), p = peserta(); p.nama = ((i && i.value) || "").trim().toUpperCase().slice(0, 60) || "PESERTA SIMULASI"; simpanSet(); go("konfirmasi/" + el.dataset.v); },
   "lainnya"() { bukaMenu(); },
+  "srs-mulai"() { mulaiSesi(acak(srsJatuhTempo()).slice(0, 30), "Pengulangan berkala"); },
   "latih-lambat"() { mulaiSesi(acak(soalLambat()).slice(0, 20), "Latih soal benar-tetapi-lambat"); },
   "menu"() { if (document.body.classList.contains("menu-open")) tutupMenu(); else bukaMenu(); },
   "menu-close"() { tutupMenu(); const b = document.querySelector(".menu-btn"); if (b) b.focus({ preventScroll: true }); },
@@ -1669,6 +1746,7 @@ const CHG = {
   "debug"(el) { SET.debug = el.checked; simpanSet(); },
   "pgMode"(el) { SET.pgMode = el.value; simpanSet(); },
   "kalk"(el) { const n = parseFloat(el.value); if (!isNaN(n) && n >= 0) { KALK[el.dataset.k] = n; render(true); } },
+  "tanggalUjian"(el) { SET.tanggalUjian = el.value || null; simpanSet(); toast(el.value ? "Tanggal ujian disimpan." : "Tanggal ujian dihapus."); render(true); },
   "soalBaru"(el) { SET.soalBaru = el.checked; simpanSet(); render(true); },
   "setuju"(el) { const b = $("#btn-mulai"); if (b) b.disabled = !el.checked; },
   "kunciSelesai"(el) { SET.kunciSelesai = el.checked; simpanSet(); },
