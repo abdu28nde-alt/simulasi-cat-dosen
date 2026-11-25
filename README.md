@@ -2,6 +2,11 @@
 
 Website latihan mandiri CAT CPNS formasi Dosen lulusan Magister (SKD + SKB Dosen). Tanpa backend, tanpa login, berjalan offline.
 
+**Situs publik:** https://abdu28nde-alt.github.io/simulasi-cat-dosen/ (GitHub Pages, tanpa login)
+
+## Memperbarui situs
+Ubah berkas di folder ini, lalu jalankan `git add -A`, `git commit -m "pesan"`, dan `git push`. GitHub Pages memperbarui situs dalam 1–2 menit.
+
 ## Cara menjalankan
 Buka `index.html` langsung di browser (klik dua kali). Semua progres tersimpan di `localStorage` perangkat tersebut. Untuk pindah perangkat gunakan **Pengaturan → Ekspor/Impor progres**.
 
