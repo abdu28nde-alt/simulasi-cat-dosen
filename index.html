@@ -11,6 +11,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="CAT Dosen">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>Simulasi CAT Dosen</title>
 <meta name="description" content="Latihan dan simulasi CAT CPNS formasi Dosen lulusan Magister: SKD (TWK, TIU, TKP) dan SKB Dosen. Berjalan offline.">
 <style>
@@ -348,6 +351,11 @@ body.cat-mode .toast{bottom:auto;top:calc(72px + env(safe-area-inset-top));backg
   details{border:none;padding:0}details>summary{display:none}
 }
 /* ================= TEMA PORTAL (navy + oranye) ================= */
+input[type=date],textarea{font:inherit;font-size:16px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 10px;min-height:44px;max-width:100%}
+select,input[type=number],input[type=text],input[type=date]{min-height:44px}
+input[type=checkbox],input[type=radio]{width:20px;height:20px;accent-color:var(--accent)}
+:focus-visible{outline:3px solid var(--orange);outline-offset:2px}
+@media (max-width:767px){.tblwrap .tbl:has(th:nth-child(5)){min-width:580px}.tblwrap .tbl:has(th:nth-child(4)):not(:has(th:nth-child(5))){min-width:440px}.tblwrap{-webkit-overflow-scrolling:touch}}
 body.cat-mode{padding-top:0}
 .cat{--navy-c:#0b3d91;--orange:#F7941D;--heading:#1a1a1a;--font:Arial,"Segoe UI",sans-serif}
 .cat b,.cat strong{color:inherit}
@@ -1932,6 +1940,11 @@ function showTip(t, x, y) { if (!tipEl) { tipEl = document.createElement("div");
 document.addEventListener("pointermove", e => { const t = e.target.closest && e.target.closest("[data-tip]"); if (t) showTip(t.getAttribute("data-tip"), e.clientX, e.clientY); else hideTip(); });
 document.addEventListener("pointerdown", e => { const t = e.target.closest && e.target.closest("[data-tip]"); if (t) showTip(t.getAttribute("data-tip"), e.clientX, e.clientY); });
 
+/* PWA: daftarkan service worker hanya di situs biasa (bukan di pratinjau claude.ai atau file lokal) */
+try {
+  const lokal = /^(localhost|127.0.0.1)$/.test(location.hostname);
+  if ("serviceWorker" in navigator && !window.claude && (location.protocol === "https:" || lokal) && !/[?&]nosw=1/.test(location.search)) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+} catch (e) {}
 /* Splash: sekali per sesi, dapat dilewati dengan ketukan */
 (function () {
   const sp = document.getElementById("splash"); if (!sp) return;
