@@ -107,5 +107,7 @@
   rujukan("TWK-PIL-005", "Risalah Sidang PPKI 18 Agustus 1945; Pembukaan UUD NRI 1945 alinea IV");
   rujukan("TWK-PIL-007", "UUD NRI 1945 beserta Perubahan Pertama s.d. Keempat (1999–2002)");
   rujukan("TWK-BEL-008", "UU No. 3 Tahun 2002 tentang Pertahanan Negara");
+  rujukan("SKB-MDB-017", "UUD NRI 1945; Kemenag RI, Moderasi Beragama (2019) — indikator komitmen kebangsaan");
+  rujukan("SKB-MDB-020", "UUD NRI 1945; Pancasila; Kemenag RI, Moderasi Beragama (2019)");
   rujukan("SKB-MOD-003", "Kementerian Agama RI, Moderasi Beragama (Badan Litbang dan Diklat, 2019) — perlu verifikasi edisi terbaru");
 })();

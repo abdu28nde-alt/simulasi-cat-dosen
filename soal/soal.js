@@ -81,6 +81,24 @@ window.BANK = window.BANK || [];
     return !/(^|[^A-Za-z0-9])[A-E](?=[^A-Za-z0-9]|$)/.test(prosa);
   };
 
+  /* Sebar posisi kunci untuk soal baru (pilihan) secara deterministik berdasarkan ID,
+     agar kunci tidak menumpuk di satu huruf. Peta "kenapa opsi lain salah" ikut dipetakan ulang.
+     Dilewati bila prosa pembahasan menyebut huruf opsi (A–E). */
+  window.sebarKunci = function (o) {
+    if (!o || !o.o || Array.isArray(o.o[0]) || !o.a) return o;
+    var p = o.p || {}, prosa = [p.k, (p.l || []).join(" "), p.c, p.s && p.s.join(" "), o.q].map(teks).join(" ");
+    if (/(^|[^A-Za-z0-9])[A-E](?=[^A-Za-z0-9]|$)/.test(prosa)) return o;
+    var h = 0; for (var i = 0; i < o.id.length; i++) h = (h * 31 + o.id.charCodeAt(i)) >>> 0;
+    var dari = KODE.indexOf(o.a), ke = h % 5;
+    if (dari < 0 || dari === ke) return o;
+    var opsi = o.o.slice(), kunci = opsi.splice(dari, 1)[0]; opsi.splice(ke, 0, kunci);
+    var lama = [0, 1, 2, 3, 4].filter(function (i) { return i !== dari; }), baru = [0, 1, 2, 3, 4].filter(function (i) { return i !== ke; }), peta = {};
+    peta[KODE[dari]] = KODE[ke]; lama.forEach(function (li, j) { peta[KODE[li]] = KODE[baru[j]]; });
+    if (p.x && !p.x.lain) { var nx = {}; Object.keys(p.x).forEach(function (k) { nx[peta[k] || k] = p.x[k]; }); p.x = nx; }
+    o.o = opsi; o.a = KODE[ke];
+    return o;
+  };
+
   /* Validator otomatis — dipanggil oleh aplikasi saat dimuat.
      Mengembalikan array masalah (galat). Properti tambahan: .peringatan dan .statistik. */
   window.validasiBank = function (bank) {
