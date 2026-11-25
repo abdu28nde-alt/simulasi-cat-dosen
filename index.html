@@ -604,6 +604,7 @@ body.menu-open .side-scrim{display:block}
 <script src="soal/perbaikan-mutu.js"></script>
 <script src="soal/materi.js"></script>
 <script src="soal/materi-kemenag-fdk.js"></script>
+<script src="soal/noncat-fdk.js"></script>
 <script>
 (function () {
 "use strict";
@@ -855,6 +856,7 @@ function render(keepScroll) {
   const catMode = ["peserta", "konfirmasi", "ujian", "hasil"].indexOf(r.path) >= 0;
   document.body.classList.toggle("cat-mode", catMode);
   if (r.path !== "ujian") wakeOff();
+  if (r.path !== "noncat" && typeof rekamBersih === "function") rekamBersih();
   const aktif = d => d === r.path || (d === "latihan" && (r.path === "sesi" || r.path === "ringkasan")) || (d === "simulasi" && ["peserta", "konfirmasi", "hasil", "review"].indexOf(r.path) >= 0) || (d === "lainnya" && ["materi", "noncat", "cetak", "pengaturan"].indexOf(r.path) >= 0);
   document.querySelectorAll("#sidenav a[data-r], #bnav [data-r]").forEach(a => { const on = aktif(a.dataset.r); a.classList.toggle("on", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
   const fn = ROUTES[r.path] || vHome;
@@ -1589,24 +1591,111 @@ function vMateri() {
     (SET.formasi !== "uinsgd-fdk" ? '<p class="muted"><small>Materi Moderasi Beragama tampil untuk formasi Kemenag; materi Bidang Dakwah & Komunikasi tampil untuk preset UIN SGD – FDK.</small></p>' : "");
 }
 
-/* ===================== SKB NON-CAT ===================== */
+/* ===================== SKB NON-CAT (Fase 5) ===================== */
+/* Rekaman disimpan di IndexedDB perangkat ini saja (tidak pernah diunggah). */
+const IDB = {
+  db: null,
+  buka() {
+    return new Promise((res, rej) => {
+      if (this.db) return res(this.db);
+      if (!window.indexedDB) return rej(new Error("IndexedDB tidak tersedia"));
+      const r = indexedDB.open("catdosen-rekaman", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("rekaman", { keyPath: "id" });
+      r.onsuccess = () => { this.db = r.result; res(this.db); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async simpan(o) { const db = await this.buka(); return new Promise((res, rej) => { const tx = db.transaction("rekaman", "readwrite"); tx.objectStore("rekaman").put(o); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); },
+  async semua() { const db = await this.buka(); return new Promise((res, rej) => { const r = db.transaction("rekaman").objectStore("rekaman").getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); }); },
+  async hapus(id) { const db = await this.buka(); return new Promise((res, rej) => { const tx = db.transaction("rekaman", "readwrite"); tx.objectStore("rekaman").delete(id); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+};
+let REK = null;          // perekaman aktif
 let NCTAB = "wawancara";
+let WW = null;            // sesi latihan wawancara aktif/selesai
+let MT = null;            // timer microteaching
+const URL_REK = [];       // object URL yang perlu dilepas
+function rekamDidukung() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder); }
+async function rekamMulai(tipe, jenis, judul) {
+  if (!rekamDidukung()) throw new Error("tidak didukung");
+  const stream = await navigator.mediaDevices.getUserMedia(tipe === "video" ? { audio: true, video: { width: 640, height: 360 } } : { audio: true });
+  const chunks = [], rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.start(1000);
+  REK = { rec, stream, chunks, tipe, jenis, judul, mulai: Date.now() };
+  const pv = document.getElementById("rek-preview"); if (pv && tipe === "video") { pv.srcObject = stream; pv.hidden = false; pv.play().catch(() => {}); }
+}
+function rekamBerhenti() {
+  return new Promise(res => {
+    if (!REK) return res(null);
+    const r = REK; REK = null;
+    r.rec.onstop = async () => {
+      r.stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(r.chunks, { type: r.rec.mimeType || (r.tipe === "video" ? "video/webm" : "audio/webm") });
+      const o = { id: "R" + Date.now(), ts: Date.now(), tipe: r.tipe, jenis: r.jenis, judul: r.judul, durasi: Math.round((Date.now() - r.mulai) / 1000), mime: blob.type, blob };
+      try { await IDB.simpan(o); res(o); } catch (e) { toast("Gagal menyimpan rekaman di perangkat."); res(null); }
+    };
+    try { r.rec.stop(); } catch (e) { res(null); }
+  });
+}
+function rekamBersih() { if (REK) { try { REK.rec.stop(); REK.stream.getTracks().forEach(t => t.stop()); } catch (e) {} REK = null; } if (MT && MT.timer) { clearInterval(MT.timer); MT = null; } if (WW && WW.timer) { clearInterval(WW.timer); WW.timer = null; } }
+function pesanRekamGagal(e) {
+  return e && e.name === "NotAllowedError" ? "Izin mikrofon/kamera ditolak. Izinkan di pengaturan browser lalu coba lagi." :
+    !rekamDidukung() ? "Perekaman tidak didukung browser ini." : "Perekaman tidak dapat dimulai di tampilan ini (mis. dibuka di dalam pratinjau claude.ai). Buka situs GitHub Pages di browser untuk merekam.";
+}
+function semuaPertanyaan() {
+  const umum = (NONCAT.wawancara || []).map(w => ({ q: w[0], k: w[1], tag: "Umum" }));
+  const fdk = SET.formasi === "kemdiktisaintek" ? [] : (NONCAT.wawancaraFdk || []).map(w => ({ q: w[0], k: w[1], tag: "PTKIN/FDK" }));
+  return fdk.concat(umum);
+}
 function vNoncat() {
+  rekamBersih();
   const tab = (v, l) => '<button class="chip' + (NCTAB === v ? " on" : "") + '" data-act="nc-tab" data-v="' + v + '">' + l + "</button>";
   let body = "";
+  const rekPilihan = (nama) => '<div class="row" role="radiogroup" aria-label="Perekaman">' + [["tidak", "Tanpa rekaman"], ["audio", "Rekam audio"], ["video", "Rekam video"]].map(x => '<label class="row" style="gap:6px"><input type="radio" name="' + nama + '" value="' + x[0] + '"' + (x[0] === "tidak" ? " checked" : "") + (x[0] !== "tidak" && !rekamDidukung() ? " disabled" : "") + "> " + x[1] + "</label>").join("") + "</div>";
   if (NCTAB === "wawancara") {
-    body = '<div class="card">' + (NONCAT.star || "") + '</div><div class="actions"><button class="btn primary" data-act="nc-acak">🎲 Latihan: pertanyaan acak</button></div><div id="nc-acak"></div><h2>Bank pertanyaan wawancara</h2>' +
-      (NONCAT.wawancara || []).map((w, i) => '<details class="card"><summary>' + (i + 1) + ". " + esc(w[0]) + "</summary><p><b>Kerangka jawaban:</b> " + esc(w[1]) + "</p></details>").join("");
-  } else {
-    const ck = LS.get("rpsCheck", {}), rub = LS.get("rubrikSelf", {});
-    body = '<h2>Checklist RPS / rencana microteaching</h2><div class="card">' + (NONCAT.checklistRPS || []).map((c, i) => '<label class="check"><input type="checkbox" data-chg="rps" data-i="' + i + '"' + (ck[i] ? " checked" : "") + "><span>" + esc(c) + "</span></label>").join("") + "</div>" +
+    const daftar = semuaPertanyaan(), riwayat = LS.get("wawancara", []);
+    body = '<div class="card">' + (NONCAT.star || "") + "</div>" +
+      "<h2>Latihan menjawab wawancara</h2><div class=\"card\" id=\"ww-area\">" +
+      '<label class="field">Pertanyaan<select id="ww-q"><option value="acak">🎲 Acak</option>' + daftar.map((d, i) => '<option value="' + i + '">[' + d.tag + "] " + esc(d.q.length > 90 ? d.q.slice(0, 88) + "…" : d.q) + "</option>").join("") + "</select></label>" +
+      '<div class="row" style="margin-top:10px"><label class="field">Waktu menjawab<select id="ww-durasi"><option value="60">1 menit</option><option value="90">1,5 menit</option><option value="120" selected>2 menit</option></select></label></div>' +
+      '<div style="margin-top:10px">' + rekPilihan("ww-rek") + '</div><video id="rek-preview" muted playsinline hidden style="max-width:100%;border-radius:12px;margin-top:8px"></video>' +
+      '<div class="actions"><button class="btn primary" data-act="ww-mulai">Mulai menjawab</button></div>' +
+      '<small>Rekaman tersimpan hanya di perangkat ini (IndexedDB) dan tidak diunggah ke mana pun.</small></div>' +
+      (riwayat.length ? '<h2>Riwayat penilaian diri</h2><div class="card"><div class="tblwrap"><table class="tbl"><thead><tr><th>Tanggal</th><th>Pertanyaan</th><th>Skor</th><th>Waktu</th></tr></thead><tbody>' + riwayat.slice(0, 10).map(r => "<tr><td>" + fmtTgl(r.ts) + "</td><td>" + esc(r.q.slice(0, 70)) + (r.q.length > 70 ? "…" : "") + "</td><td><b>" + r.total + "</b>/16</td><td>" + r.dipakai + " / " + r.durasi + " dtk</td></tr>").join("") + "</tbody></table></div></div>" : "") +
+      "<h2>Bank pertanyaan wawancara</h2>" + daftar.map((w, i) => '<details class="card"><summary>' + (i + 1) + ". " + esc(w.q) + ' <span class="pill">' + w.tag + "</span></summary><p><b>Kerangka jawaban:</b> " + esc(w.k) + "</p></details>").join("");
+  } else if (NCTAB === "micro") {
+    const ck = LS.get("rpsCheck", {}), rub = LS.get("rubrikSelf", {}), rs = LS.get("rencanaSesi", {}), topik = SET.formasi === "kemdiktisaintek" ? [] : (NONCAT.topikFdk || []);
+    const fld = (k, label, tipe) => '<label class="field">' + label + (tipe === "area" ? '<textarea data-chg="rs" data-k="' + k + '" rows="2" style="font:inherit;font-size:16px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text)">' + esc(rs[k] || "") + "</textarea>" : '<input type="text" data-chg="rs" data-k="' + k + '" value="' + esc(rs[k] || "") + '">') + "</label>";
+    body = "<h2>Timer sesi microteaching</h2><div class=\"card\" id=\"mt-area\"><div class=\"row\"><label class=\"field\">Durasi sesi (menit)<input type=\"number\" id=\"mt-menit\" min=\"5\" max=\"30\" value=\"" + (LS.get("mtMenit", 12)) + '" style="width:100px"></label></div><div style="margin-top:10px">' + rekPilihan("mt-rek") + '</div><video id="rek-preview" muted playsinline hidden style="max-width:100%;border-radius:12px;margin-top:8px"></video>' +
+      '<div class="actions"><button class="btn primary" data-act="mt-mulai">Mulai sesi</button></div><div id="mt-status" aria-live="polite"></div></div>' +
+      (topik.length ? '<h2>Contoh topik mata kuliah FDK</h2><div class="card"><div class="tblwrap"><table class="tbl"><thead><tr><th>Mata kuliah</th><th>Topik</th><th>Contoh CPMK</th><th></th></tr></thead><tbody>' + topik.map((t, i) => "<tr><td>" + esc(t[0]) + "</td><td>" + esc(t[1]) + "</td><td>" + esc(t[2]) + '</td><td><button class="btn sm" data-act="rs-pakai" data-i="' + i + '">Pakai</button></td></tr>').join("") + "</tbody></table></div></div>" : "") +
+      '<h2>Template rencana sesi singkat</h2><div class="card"><div class="grid2" style="gap:10px">' + fld("mk", "Mata kuliah") + fld("topik", "Topik") + fld("cpmk", "CPMK / Sub-CPMK", "area") + fld("metode", "Metode pembelajaran", "area") + fld("pembuka", "Kegiatan pembuka (±2 menit)", "area") + fld("inti", "Kegiatan inti (±8 menit)", "area") + fld("penutup", "Penutup & refleksi (±3 menit)", "area") + fld("asesmen", "Asesmen & rubrik singkat", "area") + fld("media", "Media/sumber belajar") + fld("referensi", "Referensi") +
+      '</div><div class="actions"><button class="btn" data-act="rs-salin">Salin teks</button><button class="btn" data-act="print">Cetak</button><button class="btn danger" data-act="rs-hapus">Kosongkan</button></div><small>Tersimpan otomatis di perangkat ini.</small></div>' +
+      '<h2>Checklist RPS / rencana microteaching</h2><div class="card">' + (NONCAT.checklistRPS || []).map((c, i) => '<label class="check"><input type="checkbox" data-chg="rps" data-i="' + i + '"' + (ck[i] ? " checked" : "") + "><span>" + esc(c) + "</span></label>").join("") + "</div>" +
       '<h2>Alur 10–15 menit</h2><div class="card"><div class="tblwrap"><table class="tbl"><thead><tr><th>Waktu</th><th>Kegiatan</th></tr></thead><tbody>' + (NONCAT.alur || []).map(a => "<tr><td>" + esc(a[0]) + "</td><td>" + esc(a[1]) + "</td></tr>").join("") + "</tbody></table></div></div>" +
       '<h2>Rubrik penilaian (penilaian diri 1–4)</h2><div class="card"><div class="tblwrap"><table class="tbl"><thead><tr><th>Aspek</th><th>Indikator</th><th>Nilai diri</th></tr></thead><tbody>' +
       (NONCAT.rubrik || []).map((r, i) => "<tr><td>" + esc(r[0]) + "</td><td>" + esc(r[1]) + '</td><td><select data-chg="rubrik" data-i="' + i + '" aria-label="Nilai ' + esc(r[0]) + '"><option value="">–</option>' + [1, 2, 3, 4].map(v => '<option value="' + v + '"' + (+rub[i] === v ? " selected" : "") + ">" + v + "</option>").join("") + "</select></td></tr>").join("") +
       "</tbody></table></div><p><b>Total:</b> " + Object.values(rub).reduce((a, b) => a + (+b || 0), 0) + " / " + ((NONCAT.rubrik || []).length * 4) + "</p></div>" +
-      '<h2>Contoh topik per bidang</h2><div class="card"><ul>' + (NONCAT.topik || []).map(t => "<li><b>" + esc(t[0]) + ":</b> " + esc(t[1]) + "</li>").join("") + "</ul></div>";
+      '<h2>Contoh topik umum per bidang</h2><div class="card"><ul>' + (NONCAT.topik || []).map(t => "<li><b>" + esc(t[0]) + ":</b> " + esc(t[1]) + "</li>").join("") + "</ul></div>";
+  } else {
+    body = '<h2>Rekaman di perangkat ini</h2><div class="card" id="rek-daftar"><p class="muted">Memuat…</p></div><small>Rekaman disimpan di IndexedDB browser ini. Menghapus data situs di browser juga menghapus rekaman.</small>';
+    setTimeout(muatDaftarRekaman, 0);
   }
-  app.innerHTML = "<h1>Persiapan SKB Non-CAT</h1><p class=\"muted\">Wawancara dan praktik mengajar (microteaching) sesuai ketentuan instansi.</p><div class=\"tabs\">" + tab("wawancara", "Wawancara") + tab("micro", "Praktik Mengajar / Microteaching") + "</div>" + body;
+  app.innerHTML = "<h1>Persiapan SKB Non-CAT</h1><p class=\"muted\">Wawancara dan praktik mengajar (microteaching) sesuai ketentuan instansi.</p><div class=\"tabs\">" + tab("wawancara", "Wawancara") + tab("micro", "Microteaching") + tab("rekaman", "Rekaman saya") + "</div>" + body;
+}
+async function muatDaftarRekaman() {
+  const box = document.getElementById("rek-daftar"); if (!box) return;
+  URL_REK.splice(0).forEach(u => URL.revokeObjectURL(u));
+  let list = [];
+  try { list = (await IDB.semua()).sort((a, b) => b.ts - a.ts); } catch (e) { box.innerHTML = '<p class="muted">Penyimpanan rekaman tidak tersedia di tampilan ini.</p>'; return; }
+  if (!list.length) { box.innerHTML = '<p class="muted">Belum ada rekaman. Rekam dari tab Wawancara atau Microteaching.</p>'; return; }
+  box.innerHTML = list.map(r => { const u = URL.createObjectURL(r.blob); URL_REK.push(u); return '<div style="border-bottom:1px solid var(--border);padding:10px 0"><b>' + esc(r.judul || r.jenis) + "</b><br><small>" + fmtTgl(r.ts) + " · " + esc(r.jenis) + " · " + mmss(r.durasi) + (r.skor ? " · penilaian diri " + r.skor + "/16" : "") + "</small><br>" + (r.tipe === "video" ? '<video controls playsinline src="' + u + '" style="max-width:100%;border-radius:10px;margin-top:6px"></video>' : '<audio controls src="' + u + '" style="width:100%;margin-top:6px"></audio>') + '<div class="row" style="margin-top:6px"><button class="btn sm" data-act="rek-unduh" data-id="' + r.id + '">Simpan berkas</button><button class="btn sm danger" data-act="rek-hapus" data-id="' + r.id + '">Hapus</button></div></div>'; }).join("");
+}
+function mtFase(detik, total) {
+  const alur = NONCAT.alur || [], skala = total / 900; // alur bawaan untuk 15 menit
+  const batas = [60, 120, 480, 660, 780, 900].map(x => x * skala);
+  for (let i = 0; i < batas.length; i++) if (detik < batas[i]) return (alur[i] && alur[i][1]) || "";
+  return "Waktu habis";
 }
 
 /* ===================== CETAK ===================== */
@@ -1690,6 +1779,53 @@ const ACT = {
   "u-tab"(el) { NAVTAB = el.dataset.v; gridUjian(); const t = document.querySelector('#exam-side [data-act="u-tab"][data-v="' + el.dataset.v + '"]'); if (t) t.focus({ preventScroll: true }); },
   "peserta-ok"(el) { const i = $("#ps-nama"), p = peserta(); p.nama = ((i && i.value) || "").trim().toUpperCase().slice(0, 60) || "PESERTA SIMULASI"; simpanSet(); go("konfirmasi/" + el.dataset.v); },
   "lainnya"() { bukaMenu(); },
+  async "ww-mulai"() {
+    const daftar = semuaPertanyaan(), pil = ($("#ww-q") || {}).value || "acak", idx = pil === "acak" ? Math.floor(Math.random() * daftar.length) : +pil, d = daftar[idx];
+    const durasi = +(($("#ww-durasi") || {}).value || 120), rek = (document.querySelector('input[name="ww-rek"]:checked') || {}).value || "tidak";
+    WW = { q: d.q, k: d.k, durasi, mulai: Date.now(), rec: null };
+    const area = $("#ww-area");
+    area.innerHTML = '<p class="muted">Pertanyaan</p><p style="font-size:1.15rem"><b>' + esc(d.q) + '</b></p><p style="font-size:2rem;margin:8px 0" class="mono"><b id="ww-t">' + mmss(durasi) + '</b></p><div class="bar"><i id="ww-bar" style="width:100%"></i></div><video id="rek-preview" muted playsinline hidden style="max-width:100%;border-radius:12px;margin-top:8px"></video><p id="ww-rek-info" class="muted"></p><div class="actions"><button class="btn primary" data-act="ww-selesai">Selesai menjawab</button></div>';
+    if (rek !== "tidak") { try { await rekamMulai(rek, "wawancara", d.q); $("#ww-rek-info").textContent = "● Merekam " + (rek === "video" ? "video" : "audio") + "…"; } catch (e) { $("#ww-rek-info").textContent = pesanRekamGagal(e); } }
+    WW.mulai = Date.now();
+    WW.timer = setInterval(() => { const sisa = WW.durasi - (Date.now() - WW.mulai) / 1000, t = $("#ww-t"), b = $("#ww-bar"); if (t) t.textContent = mmss(Math.max(0, sisa)); if (b) b.style.width = Math.max(0, sisa / WW.durasi * 100) + "%"; if (sisa <= 0) ACT["ww-selesai"](); }, 250);
+  },
+  async "ww-selesai"() {
+    if (!WW || WW.selesai) return; WW.selesai = true; clearInterval(WW.timer); WW.timer = null;
+    WW.dipakai = Math.min(WW.durasi, Math.round((Date.now() - WW.mulai) / 1000));
+    WW.rec = await rekamBerhenti();
+    const R = NONCAT.rubrikWawancara || [], area = $("#ww-area"); if (!area) return;
+    let media = ""; if (WW.rec) { const u = URL.createObjectURL(WW.rec.blob); URL_REK.push(u); media = WW.rec.tipe === "video" ? '<video controls playsinline src="' + u + '" style="max-width:100%;border-radius:10px"></video>' : '<audio controls src="' + u + '" style="width:100%"></audio>'; }
+    area.innerHTML = '<p><b>' + esc(WW.q) + "</b></p><p>Waktu terpakai: " + WW.dipakai + " dari " + WW.durasi + " detik.</p>" + media +
+      '<details class="card"><summary>Kerangka jawaban</summary><p>' + esc(WW.k) + "</p></details><h3>Penilaian diri (1–4)</h3>" +
+      '<div class="tblwrap"><table class="tbl"><tbody>' + R.map((r, i) => "<tr><td><b>" + esc(r[0]) + "</b><br><small>" + esc(r[1]) + '</small></td><td><select id="ww-r' + i + '" aria-label="Nilai ' + esc(r[0]) + '">' + [1, 2, 3, 4].map(v => '<option value="' + v + '"' + (v === 3 ? " selected" : "") + ">" + v + "</option>").join("") + "</select></td></tr>").join("") + "</tbody></table></div>" +
+      '<label class="field">Catatan perbaikan<textarea id="ww-catatan" rows="2" style="font:inherit;font-size:16px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text)"></textarea></label><div class="actions"><button class="btn primary" data-act="ww-simpan">Simpan penilaian</button><button class="btn" data-act="nc-tab" data-v="wawancara">Latihan lagi</button></div>';
+  },
+  async "ww-simpan"() {
+    if (!WW) return; const R = NONCAT.rubrikWawancara || [], skor = {}; let total = 0;
+    R.forEach((r, i) => { const v = +(($("#ww-r" + i) || {}).value || 0); skor[r[0]] = v; total += v; });
+    const riw = LS.get("wawancara", []); riw.unshift({ ts: Date.now(), q: WW.q, durasi: WW.durasi, dipakai: WW.dipakai, skor, total, catatan: (($("#ww-catatan") || {}).value || "").slice(0, 500), rekamanId: WW.rec ? WW.rec.id : null }); LS.set("wawancara", riw.slice(0, 100));
+    if (WW.rec) { WW.rec.skor = total; try { await IDB.simpan(WW.rec); } catch (e) {} }
+    WW = null; toast("Penilaian disimpan (" + total + "/16)."); render(true);
+  },
+  async "mt-mulai"() {
+    const menit = Math.min(30, Math.max(5, +(($("#mt-menit") || {}).value || 12))); LS.set("mtMenit", menit);
+    const rek = (document.querySelector('input[name="mt-rek"]:checked') || {}).value || "tidak", st = $("#mt-status"), total = menit * 60;
+    let info = "";
+    if (rek !== "tidak") { try { const rs = LS.get("rencanaSesi", {}); await rekamMulai(rek, "microteaching", "Microteaching: " + (rs.topik || "tanpa judul")); info = "● Merekam " + (rek === "video" ? "video" : "audio"); } catch (e) { info = pesanRekamGagal(e); } }
+    MT = { mulai: Date.now(), total };
+    const upd = () => { const d = (Date.now() - MT.mulai) / 1000, sisa = total - d; if (st) st.innerHTML = '<p style="font-size:2rem;margin:8px 0" class="mono"><b>' + mmss(Math.max(0, sisa)) + "</b></p><p><b>Tahap:</b> " + esc(mtFase(d, total)) + '</p><p class="muted">' + esc(info) + '</p><div class="actions"><button class="btn danger" data-act="mt-berhenti">Akhiri sesi</button></div>'; if (sisa <= 0) { toast("Waktu sesi habis."); ACT["mt-berhenti"](); } };
+    upd(); MT.timer = setInterval(upd, 500);
+  },
+  async "mt-berhenti"() {
+    if (!MT) return; clearInterval(MT.timer); const d = Math.round((Date.now() - MT.mulai) / 1000); MT = null;
+    const rec = await rekamBerhenti(), st = $("#mt-status");
+    if (st) st.innerHTML = "<p>Sesi selesai: " + mmss(d) + ". " + (rec ? 'Rekaman tersimpan di tab <a href="#" data-act="nc-tab" data-v="rekaman">Rekaman saya</a>.' : "") + "</p>";
+  },
+  "rs-pakai"(el) { const t = (NONCAT.topikFdk || [])[+el.dataset.i]; if (!t) return; const rs = LS.get("rencanaSesi", {}); rs.mk = t[0]; rs.topik = t[1]; rs.cpmk = t[2]; LS.set("rencanaSesi", rs); toast("Topik dimasukkan ke template."); render(true); },
+  "rs-salin"() { const rs = LS.get("rencanaSesi", {}), L = [["mk", "Mata kuliah"], ["topik", "Topik"], ["cpmk", "CPMK/Sub-CPMK"], ["metode", "Metode"], ["pembuka", "Pembuka"], ["inti", "Inti"], ["penutup", "Penutup"], ["asesmen", "Asesmen"], ["media", "Media"], ["referensi", "Referensi"]]; const t = L.map(x => x[1] + ": " + (rs[x[0]] || "-")).join("\n"); try { navigator.clipboard.writeText(t).then(() => toast("Rencana sesi disalin."), () => toast("Gagal menyalin.")); } catch (e) { toast("Gagal menyalin."); } },
+  async "rs-hapus"() { const ok = await modal("<h3>Kosongkan template?</h3><p>Isi rencana sesi akan dihapus dari perangkat ini.</p>", [{ label: "Kosongkan", v: true, cls: "danger" }, { label: "Batal", v: false, cls: "primary" }]); if (ok) { LS.del("rencanaSesi"); render(true); } },
+  async "rek-unduh"(el) { try { const r = (await IDB.semua()).find(x => x.id === el.dataset.id); if (r) simpanBerkas("rekaman-" + r.jenis + "-" + tgl(new Date(r.ts)) + (/mp4/.test(r.mime) ? ".mp4" : ".webm"), r.blob, r.mime); } catch (e) { toast("Rekaman tidak dapat dibuka."); } },
+  async "rek-hapus"(el) { const ok = await modal("<h3>Hapus rekaman?</h3><p>Rekaman akan dihapus permanen dari perangkat ini dan tidak dapat dikembalikan.</p>", [{ label: "Hapus", v: true, cls: "danger" }, { label: "Batal", v: false, cls: "primary" }]); if (ok) { try { await IDB.hapus(el.dataset.id); } catch (e) {} muatDaftarRekaman(); } },
   "srs-mulai"() { mulaiSesi(acak(srsJatuhTempo()).slice(0, 30), "Pengulangan berkala"); },
   "latih-lambat"() { mulaiSesi(acak(soalLambat()).slice(0, 20), "Latih soal benar-tetapi-lambat"); },
   "menu"() { if (document.body.classList.contains("menu-open")) tutupMenu(); else bukaMenu(); },
@@ -1747,6 +1883,7 @@ const CHG = {
   "pgMode"(el) { SET.pgMode = el.value; simpanSet(); },
   "kalk"(el) { const n = parseFloat(el.value); if (!isNaN(n) && n >= 0) { KALK[el.dataset.k] = n; render(true); } },
   "tanggalUjian"(el) { SET.tanggalUjian = el.value || null; simpanSet(); toast(el.value ? "Tanggal ujian disimpan." : "Tanggal ujian dihapus."); render(true); },
+  "rs"(el) { const rs = LS.get("rencanaSesi", {}); rs[el.dataset.k] = el.value.slice(0, 1000); LS.set("rencanaSesi", rs); },
   "soalBaru"(el) { SET.soalBaru = el.checked; simpanSet(); render(true); },
   "setuju"(el) { const b = $("#btn-mulai"); if (b) b.disabled = !el.checked; },
   "kunciSelesai"(el) { SET.kunciSelesai = el.checked; simpanSet(); },
