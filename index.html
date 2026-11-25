@@ -599,6 +599,7 @@ body.menu-open .side-scrim{display:block}
 <script src="soal/soal-skb-etika2.js"></script>
 <script src="soal/soal-skb-ing2.js"></script>
 <script src="soal/soal-skb-psi2.js"></script>
+<script src="soal/perbaikan-mutu.js"></script>
 <script src="soal/materi.js"></script>
 <script>
 (function () {
@@ -639,7 +640,40 @@ const LS = {
   del(k) { try { localStorage.removeItem(PFX + k); } catch (e) {} },
   keys() { try { return Object.keys(localStorage).filter(k => k.indexOf(PFX) === 0); } catch (e) { return []; } }
 };
-const SET = Object.assign({ formasi: "kemdiktisaintek", tema: "light", pgMode: "umum", stopwatch: true, debug: false, kunciSelesai: true, wakeLock: true, getar: true }, LS.get("settings", {}));
+/* ===================== MIGRASI SKEMA DATA =====================
+   catdosen_schema menyimpan versi skema. Setiap langkah migrasi hanya MENAMBAH
+   field/kunci baru; data lama tidak dihapus. File ekspor lama (tanpa schemaVersion)
+   tetap bisa diimpor: setelah impor, migrasi dijalankan ulang dari versi 1. */
+const SKEMA = 2;
+(function migrasi() {
+  let v = LS.get("schema", 1);
+  if (v >= SKEMA) return;
+  try {
+    if (v < 2) {
+      const st = LS.get("settings", null);
+      if (st && st.formasi === "kemdiktisaintek" && !st.formasiDipilih) st.formasi = "kemenag"; // bawaan lama -> bawaan baru
+      if (st) LS.set("settings", st);
+      const pr = LS.get("progress", {});
+      Object.keys(pr).forEach(id => { const p = pr[id];
+        if (p.sum == null) { p.sum = p.sk || 0; p.ns = p.n ? 1 : 0; }           // jumlah skor (perkiraan dari skor terakhir)
+        if (p.c34 == null) p.c34 = (p.sk === 3 || p.sk === 4) ? 1 : 0;          // pilihan bernilai 3–4 (TKP/Psikologi)
+        if (p.lt == null) p.lt = p.n ? Math.round((p.t || 0) / p.n) : 0;        // waktu terakhir (perkiraan rata-rata)
+      });
+      LS.set("progress", pr);
+      const per = new Set(LS.get("pernah", []));
+      LS.get("history", []).forEach(h => (h.qids || []).forEach(id => per.add(id)));
+      Object.values(LS.get("usedSim", {})).forEach(a => (a || []).forEach(id => per.add(id)));
+      LS.set("pernah", [...per]);
+      const srs = LS.get("srs", {}), hariIni = tgl();
+      LS.get("salah", []).forEach(id => { if (!srs[id]) srs[id] = { lv: 0, due: hariIni, st: 0, asal: "salah" }; });
+      LS.set("srs", srs);
+    }
+    LS.set("schema", SKEMA);
+    console.info("[Migrasi] Data diperbarui dari skema " + v + " ke " + SKEMA + ".");
+  } catch (e) { console.warn("[Migrasi] Gagal, data lama dibiarkan apa adanya:", e); }
+})();
+
+const SET = Object.assign({ formasi: "kemenag", tema: "light", pgMode: "umum", stopwatch: true, debug: false, kunciSelesai: true, wakeLock: true, getar: true }, LS.get("settings", {}));
 if (/[?&]debug=1/.test(location.search)) SET.debug = true;
 function simpanSet() { LS.set("settings", SET); }
 const OV = LS.get("config", {});
@@ -727,6 +761,23 @@ function streak() {
 let DL = null;
 try { if (window.claude && typeof window.claude.use === "function") window.claude.use("downloads").then(d => { DL = d; }, () => {}); } catch (e) {}
 
+/* Simpan berkas: kapabilitas downloads di claude.ai, tautan unduhan biasa di tempat lain. */
+function simpanBerkas(nama, isi, tipe) {
+  if (DL) {
+    DL.save({ filename: nama, data: isi }).then(r => { if (r && r.status === "saved") toast("Disimpan: " + nama); }).catch(err => {
+      const c = err && err.code;
+      if (c === "declined") toast("Penyimpanan dibatalkan.");
+      else if (c === "rate_limited") toast("Masih ada permintaan simpan yang terbuka. Coba lagi sebentar.");
+      else if (c === "host_unavailable") toast("Aplikasi ini tidak dapat menyimpan berkas. Buka halaman di browser atau komputer.");
+      else toast("Penyimpanan berkas tidak tersedia di tampilan ini.");
+    });
+    return;
+  }
+  if (window.claude && window.claude.use) { toast("Penyimpanan berkas tidak tersedia di tampilan ini."); return; }
+  const blob = isi instanceof Blob ? isi : new Blob([isi], { type: tipe || "application/json" }), a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = nama; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
 /* ===================== TEMA ===================== */
 function terapkanTema() {
   const r = document.documentElement;
@@ -788,47 +839,55 @@ function render(keepScroll) {
 window.addEventListener("hashchange", () => render());
 
 /* ===================== KOMPONEN SOAL ===================== */
-function opsiHtml(q, chosen, locked) {
-  return q.opsi.map(o => {
+/* order: urutan kode opsi yang ditampilkan (huruf label mengikuti posisi). Tanpa order = urutan asli bank. */
+function labelPeta(q, order) { const m = {}; (order || q.opsi.map(o => o.kode)).forEach((k, i) => { m[k] = "ABCDE"[i]; }); return m; }
+function opsiHtml(q, chosen, locked, order) {
+  const L = labelPeta(q, order);
+  return (order || q.opsi.map(o => o.kode)).map(k => {
+    const o = q.opsi.find(x => x.kode === k);
     let cls = "opt" + (locked ? " lock" : ""), badge = "";
     if (locked) {
       if (q.tipe === "pilihan") { if (o.skor === 5) cls += " benar"; else if (chosen === o.kode) cls += " salah"; }
       else { badge = '<span class="skor" title="Skor opsi">' + o.skor + "</span>"; if (o.skor === 5) cls += " top"; if (chosen === o.kode) cls += o.skor >= 4 ? " benar" : " salah"; }
     }
     if (chosen === o.kode) cls += " sel";
-    return '<div class="' + cls + '"><span class="lt">' + o.kode + '</span><span class="tx">' + o.teks + "</span>" + badge + "</div>";
+    return '<div class="' + cls + '"><span class="lt">' + L[o.kode] + '</span><span class="tx">' + o.teks + "</span>" + badge + "</div>";
   }).join("");
 }
-function pembahasanHtml(q, chosen) {
-  const pb = q.pembahasan;
+function pembahasanHtml(q, chosen, order) {
+  const pb = q.pembahasan, L = labelPeta(q, order);
   let h = '<div class="pemb" id="pemb"><h3>Pembahasan</h3>';
   if (q.tipe === "pilihan") {
     const k = q.opsi.find(o => o.skor === 5);
-    h += "<p><b>Jawaban:</b> " + k.kode + ". " + (isFig(k.teks) ? '<span class="inline-fig">' + k.teks + "</span>" : k.teks) + "</p>";
+    h += "<p><b>Jawaban:</b> " + L[k.kode] + ". " + (isFig(k.teks) ? '<span class="inline-fig">' + k.teks + "</span>" : k.teks) + "</p>";
   } else {
     const top = q.opsi.find(o => o.skor === 5);
-    h += "<p><b>Skor Anda:</b> " + (chosen ? skorOpsi(q, chosen) : "0 (kosong)") + " dari 5. <b>Opsi skor 5:</b> " + top.kode + ". " + top.teks + "</p>";
+    h += "<p><b>Skor Anda:</b> " + (chosen ? skorOpsi(q, chosen) : "0 (kosong)") + " dari 5. <b>Opsi skor 5:</b> " + L[top.kode] + ". " + top.teks + "</p>";
   }
   if (pb.konsep) h += "<p><b>Konsep kunci:</b> " + pb.konsep + "</p>";
   if (pb.langkah && pb.langkah.length) h += "<div><b>" + (q.tipe === "skala" ? "Alasan skor:" : "Cara mengerjakan:") + "</b><ol>" + pb.langkah.map(l => "<li>" + l + "</li>").join("") + "</ol></div>";
   if (pb.caraCepat) h += '<p class="tip"><b>⚡ Cara cepat / trik:</b> ' + pb.caraCepat + "</p>";
   if (q.tipe === "skala") {
-    h += "<div><b>Skor setiap opsi:</b><ul>" + q.opsi.slice().sort((a, b) => b.skor - a.skor).map(o => "<li>" + o.kode + " (skor " + o.skor + "): " + o.teks + "</li>").join("") + "</ul></div>";
+    h += "<div><b>Skor setiap opsi:</b><ul>" + q.opsi.slice().sort((a, b) => b.skor - a.skor).map(o => "<li>" + L[o.kode] + " (skor " + o.skor + "): " + o.teks + "</li>").join("") + "</ul></div>";
   } else {
     const keys = Object.keys(pb.opsiLain || {});
     if (keys.length) {
       if (keys.length === 1 && keys[0] === "lain") h += "<p><b>Kenapa opsi lain salah:</b> " + pb.opsiLain.lain + "</p>";
-      else h += "<div><b>Kenapa opsi lain salah:</b><ul>" + keys.filter(k => k !== "lain").map(k => "<li><b>" + esc(k) + "</b> — " + pb.opsiLain[k] + "</li>").join("") + "</ul></div>";
+      else h += "<div><b>Kenapa opsi lain salah:</b><ul>" + keys.filter(k => k !== "lain").sort((a, b) => (L[a] || a).localeCompare(L[b] || b)).map(k => "<li><b>" + esc(L[k] || k) + "</b> — " + pb.opsiLain[k] + "</li>").join("") + "</ul></div>";
     }
   }
   if (pb.soalSerupa) h += '<details><summary>Contoh soal serupa</summary><p>' + pb.soalSerupa.pertanyaan + '</p><details class="spoiler"><summary>Lihat jawaban</summary><p>' + pb.soalSerupa.jawaban + "</p></details></details>";
+  if (pb.rujukan) h += '<p class="ref">📚 <b>Rujukan:</b> ' + pb.rujukan + "</p>";
   if (pb.dasarHukum) h += '<p class="ref">📘 <b>Dasar hukum / referensi:</b> ' + pb.dasarHukum + "</p>";
+  if (q.perluRujukan) h += '<p class="note">⚠️ Soal ini bermuatan hukum tetapi belum memiliki rujukan resmi. Verifikasi sebelum dijadikan pegangan.</p>';
+  if (q.bermuatanHukum) h += '<p class="ref">Terakhir dicek manusia: ' + (q.terakhirDicek ? esc(q.terakhirDicek) : "belum — cocokkan dengan peraturan terbaru") + "</p>";
   if (q.terakhirDiverifikasi === "perlu verifikasi") h += '<p class="note">⚠️ Materi soal ini perlu diverifikasi dengan peraturan terbaru.</p>';
-  else h += '<p class="ref">Terakhir diverifikasi: ' + esc(q.terakhirDiverifikasi) + " · ID " + esc(q.id) + "</p>";
+  h += '<p class="ref">ID ' + esc(q.id) + (q.terakhirDiverifikasi !== "perlu verifikasi" ? " · disusun " + esc(q.terakhirDiverifikasi) : "") + "</p>";
   return h + "</div>";
 }
+function tombolLapor(q) { return '<button class="btn sm noprint" data-act="lapor" data-id="' + esc(q.id) + '" title="Laporkan soal keliru">⚑ Laporkan</button>'; }
 function kartuSoal(q, no, chosen, extra) {
-  return '<article class="card qcard"><div class="qhead"><b>' + no + ". " + esc(SUB[q.subtes].singkat) + ' · <span class="muted">' + esc(q.subtopik) + "</span></b>" + (extra || "") + '</div><div class="qtext">' + q.pertanyaan + "</div>" + (q.gambar ? '<div class="qimg">' + q.gambar + "</div>" : "") +
+  return '<article class="card qcard"><div class="qhead"><b>' + no + ". " + esc(SUB[q.subtes].singkat) + ' · <span class="muted">' + esc(q.subtopik) + '</span></b><span class="row">' + (extra || "") + tombolLapor(q) + '</span></div><div class="qtext">' + q.pertanyaan + "</div>" + (q.gambar ? '<div class="qimg">' + q.gambar + "</div>" : "") +
     '<div class="opts' + (q.opsi.some(o => isFig(o.teks)) ? " fig" : "") + '">' + opsiHtml(q, chosen, true) + "</div>" + pembahasanHtml(q, chosen) + "</article>";
 }
 
@@ -963,7 +1022,8 @@ function vLatihanSetup() {
 }
 function mulaiSesi(ids, judul) {
   if (!ids.length) { toast("Tidak ada soal yang cocok dengan pilihan ini."); return; }
-  SES = { ids: ids, i: 0, ans: {}, waktu: {}, judul: judul, mulai: Date.now(), qStart: null, qFor: null };
+  const order = {}; ids.forEach(id => { const q = BYID[id]; if (q && window.bolehAcakTampilan && window.bolehAcakTampilan(q)) order[id] = acak(q.opsi.map(o => o.kode)); });
+  SES = { ids: ids, i: 0, ans: {}, waktu: {}, order: order, judul: judul, mulai: Date.now(), qStart: null, qFor: null };
   LS.set("sesi", SES); go("sesi");
 }
 function vSesi() {
@@ -971,7 +1031,7 @@ function vSesi() {
   if (SES.i >= SES.ids.length) { go("ringkasan"); return; }
   const q = BYID[SES.ids[SES.i]];
   if (!q) { SES.i++; LS.set("sesi", SES); vSesi(); return; }
-  const chosen = SES.ans[q.id], done = chosen !== undefined;
+  const chosen = SES.ans[q.id], done = chosen !== undefined, ord = (SES.order && SES.order[q.id]) || null, LBL = labelPeta(q, ord);
   if (!done && SES.qFor !== q.id) { SES.qFor = q.id; SES.qStart = Date.now(); LS.set("sesi", SES); }
   const target = CONFIG.targetDetik[q.subtes];
   let hasil = "";
@@ -983,10 +1043,10 @@ function vSesi() {
   app.innerHTML = '<div class="spread"><h1>' + esc(SES.judul) + '</h1><a class="btn sm" href="#/ringkasan">Akhiri sesi</a></div>' +
     '<div class="bar" aria-hidden="true"><i style="width:' + pct(SES.i + (done ? 1 : 0), SES.ids.length) + '%"></i></div>' +
     '<article class="card" style="margin-top:12px"><div class="qhead"><b>Soal ' + (SES.i + 1) + " / " + SES.ids.length + '</b><span class="row"><span class="pill">' + esc(SUB[q.subtes].singkat) + " · " + esc(q.subtopik) + '</span><span class="pill">' + esc(q.kesulitan) + "</span>" +
-    (SET.stopwatch && !done ? '<span class="sw" id="sw">⏱ 0 dtk</span>' : "") + "</span></div>" +
+    (SET.stopwatch && !done ? '<span class="sw" id="sw">⏱ 0 dtk</span>' : "") + (done ? "" : tombolLapor(q)) + "</span></div>" +
     '<div class="qtext">' + q.pertanyaan + "</div>" + (q.gambar ? '<div class="qimg">' + q.gambar + "</div>" : "") +
-    '<div class="opts' + (q.opsi.some(o => isFig(o.teks)) ? " fig" : "") + '" role="list">' + (done ? opsiHtml(q, chosen, true) : q.opsi.map(o => '<button class="opt" data-act="lat-jawab" data-k="' + o.kode + '"><span class="lt">' + o.kode + '</span><span class="tx">' + o.teks + "</span></button>").join("")) + "</div>" +
-    hasil + (done ? pembahasanHtml(q, chosen) + '<div class="actions"><button class="btn primary" data-act="lat-next">' + (SES.i + 1 < SES.ids.length ? "Soal Berikutnya →" : "Lihat Ringkasan") + '</button><button class="btn" data-act="tandai" data-id="' + q.id + '">' + (TANDAI.has(q.id) ? "🔖 Hapus tanda" : "🔖 Tandai untuk diulang") + '</button><button class="btn" data-act="lapor" data-id="' + q.id + '">⚑ Laporkan soal keliru</button></div>' : "") +
+    '<div class="opts' + (q.opsi.some(o => isFig(o.teks)) ? " fig" : "") + '" role="list">' + (done ? opsiHtml(q, chosen, true, ord) : (ord || q.opsi.map(o => o.kode)).map(k => q.opsi.find(o => o.kode === k)).map(o => '<button class="opt" data-act="lat-jawab" data-k="' + o.kode + '"><span class="lt">' + LBL[o.kode] + '</span><span class="tx">' + o.teks + "</span></button>").join("")) + "</div>" +
+    hasil + (done ? pembahasanHtml(q, chosen, ord) + '<div class="actions"><button class="btn primary" data-act="lat-next">' + (SES.i + 1 < SES.ids.length ? "Soal Berikutnya →" : "Lihat Ringkasan") + '</button><button class="btn" data-act="tandai" data-id="' + q.id + '">' + (TANDAI.has(q.id) ? "🔖 Hapus tanda" : "🔖 Tandai untuk diulang") + '</button><button class="btn" data-act="lapor" data-id="' + q.id + '">⚑ Laporkan soal keliru</button></div>' : "") +
     "</article>" + '<p class="muted noprint" style="font-size:.85rem">Pintasan: tombol A–E untuk menjawab, Enter untuk lanjut.</p>';
   if (SET.stopwatch && !done) {
     const sw = $("#sw");
@@ -1346,6 +1406,12 @@ function vCetak() {
 }
 
 /* ===================== PENGATURAN ===================== */
+function mutuBankHtml() {
+  const st = MASALAH.statistik || {}, pr = MASALAH.peringatan || [];
+  const rows = Object.keys(st).filter(k => SUB[k]).map(k => { const x = st[k], n = x.nKunci || 1; return "<tr><td>" + esc(SUB[k].singkat) + "</td><td>" + x.n + "</td><td>" + (x.nKunci ? "ABCDE".split("").map(h => h + " " + Math.round(x.kunciTampil[h] / n * 100) + "%").join(" · ") : "—") + "</td><td>" + (x.nPanjang ? Math.round(x.terpanjang / x.nPanjang * 100) + "%" : "—") + "</td><td>" + x.kes.mudah + "/" + x.kes.sedang + "/" + x.kes.sulit + "</td><td>" + x.hukum + (x.perluRujukan ? " <span class=\"pill warn\">" + x.perluRujukan + " tanpa rujukan</span>" : "") + "</td></tr>"; }).join("");
+  return '<details><summary>Laporan mutu bank soal (' + pr.length + ' peringatan)</summary><div class="tblwrap"><table class="tbl"><thead><tr><th>Subtes</th><th>Soal</th><th>Sebaran kunci di Latihan*</th><th>Kunci = opsi terpanjang</th><th>Mudah/Sedang/Sulit</th><th>Bermuatan hukum</th></tr></thead><tbody>' + rows + '</tbody></table></div><small>*Setelah pengacakan urutan opsi di Mode Latihan. Di Mode Simulasi, opsi selalu diacak. Nilai ideal: sekitar 20% per huruf dan ±20% untuk opsi terpanjang.</small><ul>' + pr.map(p => "<li>" + esc(p) + "</li>").join("") + "</ul></details>";
+}
+
 function vPengaturan() {
   const pg = CONFIG.passingGrade;
   const counts = Object.keys(SUB).map(k => { const n = BANK.filter(q => q.subtes === k).length, g = BANK.filter(q => q.subtes === k && q.generated).length; return "<tr><td>" + SUB[k].nama + "</td><td>" + n + (g ? " <small>(" + g + " otomatis)</small>" : "") + "</td><td>" + CONFIG.targetBank[k] + "</td><td>" + (n >= CONFIG.targetBank[k] ? '<span class="pill ok">Tercapai</span>' : '<span class="pill warn">' + pct(n, CONFIG.targetBank[k]) + "%</span>") + "</td></tr>"; }).join("");
@@ -1358,8 +1424,8 @@ function vPengaturan() {
     '<p class="note">Nilai ambang batas formasi khusus (cumlaude/diaspora) dan komposisi SKB perlu disesuaikan dengan pengumuman resmi.</p><div class="actions"><button class="btn primary" data-act="cfg-simpan">Simpan konfigurasi</button><button class="btn" data-act="cfg-reset">Kembalikan bawaan</button></div></div></div>' +
     '<h2>Data & progres</h2><div class="card"><div class="actions"><button class="btn" data-act="ekspor">⬇️ Ekspor progres (JSON)</button><label class="btn">⬆️ Impor progres<input type="file" accept="application/json,.json" data-chg="impor" hidden></label><button class="btn danger" data-act="reset-all">Hapus semua data</button></div><small>Ekspor/impor untuk memindahkan progres antarperangkat.</small></div>' +
     '<h2>Bank soal</h2><div class="card"><div class="tblwrap"><table class="tbl"><thead><tr><th>Subtes</th><th>Jumlah (semua formasi)</th><th>Target</th><th>Status</th></tr></thead><tbody>' + counts + "</tbody></table></div>" +
-    "<p><b>Validator:</b> " + (MASALAH.length ? '<span class="pill bad">' + MASALAH.length + " masalah</span> (lihat console)" : '<span class="pill ok">Semua ' + BANK.length + " soal lolos</span>") + "</p></div>" +
-    '<h2>Laporan soal keliru (' + LAPOR.length + ")</h2><div class=\"card\">" + (LAPOR.length ? '<div class="tblwrap"><table class="tbl"><thead><tr><th>ID</th><th>Catatan</th><th>Tanggal</th></tr></thead><tbody>' + LAPOR.map(l => "<tr><td>" + esc(l.id) + "</td><td>" + esc(l.catatan || "") + "</td><td>" + fmtTgl(l.ts) + "</td></tr>").join("") + '</tbody></table></div><div class="actions"><button class="btn" data-act="lapor-salin">Salin daftar</button><button class="btn danger" data-act="lapor-hapus">Kosongkan</button></div>' : '<p class="muted">Belum ada laporan.</p>') + "</div>";
+    "<p><b>Validator:</b> " + (MASALAH.length ? '<span class="pill bad">' + MASALAH.length + " masalah</span> (lihat console)" : '<span class="pill ok">Semua ' + BANK.length + " soal lolos</span>") + "</p>" + mutuBankHtml() + "</div>" +
+    '<h2>Laporan soal keliru (' + LAPOR.length + ")</h2><div class=\"card\">" + (LAPOR.length ? '<div class="tblwrap"><table class="tbl"><thead><tr><th>ID</th><th>Catatan</th><th>Tanggal</th></tr></thead><tbody>' + LAPOR.map(l => "<tr><td>" + esc(l.id) + "</td><td>" + esc(l.catatan || "") + "</td><td>" + fmtTgl(l.ts) + "</td></tr>").join("") + '</tbody></table></div><div class="actions"><button class="btn" data-act="lapor-ekspor">⬇️ Ekspor laporan (JSON)</button><button class="btn" data-act="lapor-salin">Salin daftar</button><button class="btn danger" data-act="lapor-hapus">Kosongkan</button></div>' : '<p class="muted">Belum ada laporan.</p>') + "</div>";
 }
 
 const ROUTES = { "": vHome, home: vHome, peserta: vPeserta, latihan: vLatihanSetup, sesi: vSesi, ringkasan: vRingkasan, simulasi: vSimulasi, konfirmasi: vKonfirmasi, ujian: vUjian, hasil: vHasil, review: vReview, statistik: vStatistik, materi: vMateri, noncat: vNoncat, cetak: vCetak, pengaturan: vPengaturan };
@@ -1439,23 +1505,11 @@ const ACT = {
   },
   "cfg-reset"() { LS.del("config"); toast("Konfigurasi bawaan dipulihkan."); setTimeout(() => location.reload(), 600); },
   "ekspor"() {
-    const data = { app: "cat-cpns-dosen", versi: 1, diekspor: new Date().toISOString(), data: {} };
+    const data = { app: "cat-cpns-dosen", versi: 2, schemaVersion: SKEMA, diekspor: new Date().toISOString(), data: {} };
     LS.keys().forEach(k => { try { data.data[k.slice(PFX.length)] = JSON.parse(localStorage.getItem(k)); } catch (e) {} });
-    const nama = "progres-cat-dosen-" + tgl() + ".json", isi = JSON.stringify(data, null, 1);
-    if (DL) {
-      DL.save({ filename: nama, data: isi }).then(r => { if (r && r.status === "saved") toast("Progres disimpan: " + nama); }).catch(err => {
-        const c = err && err.code;
-        if (c === "declined") toast("Penyimpanan dibatalkan.");
-        else if (c === "rate_limited") toast("Masih ada permintaan simpan yang terbuka. Coba lagi sebentar.");
-        else if (c === "host_unavailable") toast("Aplikasi ini tidak dapat menyimpan berkas. Buka halaman di browser atau komputer.");
-        else toast("Ekspor tidak tersedia di tampilan ini.");
-      });
-      return;
-    }
-    if (window.claude && window.claude.use) { toast("Ekspor tidak tersedia di tampilan ini."); return; }
-    const blob = new Blob([isi], { type: "application/json" }), a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = nama; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    simpanBerkas("progres-cat-dosen-" + tgl() + ".json", JSON.stringify(data, null, 1));
   },
+  "lapor-ekspor"() { simpanBerkas("laporan-soal-keliru-" + tgl() + ".json", JSON.stringify({ app: "cat-cpns-dosen", jenis: "laporan-soal", diekspor: new Date().toISOString(), laporan: LAPOR.map(l => Object.assign({ subtes: BYID[l.id] ? BYID[l.id].subtes : "", cuplikan: BYID[l.id] ? String(BYID[l.id].pertanyaan).replace(/<[^>]+>/g, " ").slice(0, 160) : "" }, l)) }, null, 1)); },
   async "reset-all"() {
     const ok = await modal("<h3>Hapus semua data?</h3><p>Riwayat, progres, pengaturan, dan ujian yang sedang berjalan akan dihapus permanen dari perangkat ini. Tindakan ini tidak dapat dibatalkan.</p>", [{ label: "Hapus semua", v: true, cls: "danger" }, { label: "Batal", v: false, cls: "primary" }]);
     if (ok) { LS.keys().forEach(k => { try { localStorage.removeItem(k); } catch (e) {} }); location.hash = "#/"; location.reload(); }
@@ -1464,7 +1518,7 @@ const ACT = {
   "lapor-hapus"() { LAPOR = []; LS.set("laporan", LAPOR); render(true); }
 };
 const CHG = {
-  "formasi"(el) { SET.formasi = el.value; simpanSet(); toast("Formasi: " + FORMASI[SET.formasi]); render(true); },
+  "formasi"(el) { SET.formasi = el.value; SET.formasiDipilih = true; simpanSet(); toast("Formasi: " + FORMASI[SET.formasi]); render(true); },
   "tema"(el) { SET.tema = el.value; simpanSet(); terapkanTema(); },
   "stopwatch"(el) { SET.stopwatch = el.checked; simpanSet(); },
   "debug"(el) { SET.debug = el.checked; simpanSet(); },
@@ -1486,6 +1540,7 @@ const CHG = {
         const d = JSON.parse(rd.result);
         if (!d || d.app !== "cat-cpns-dosen" || typeof d.data !== "object") throw new Error("format");
         Object.keys(d.data).forEach(k => { if (/^[a-zA-Z]+$/.test(k)) LS.set(k, d.data[k]); });
+        if (!d.schemaVersion || !("schema" in d.data)) LS.del("schema"); // ekspor lama: jalankan migrasi ulang
         toast("Progres berhasil diimpor."); setTimeout(() => location.reload(), 700);
       } catch (e) { toast("Berkas tidak valid."); }
     };
