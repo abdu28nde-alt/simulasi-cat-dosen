@@ -63,6 +63,10 @@
   }
 
   function serupa(fn, seed, asli) { var t; for (var k = 0; k < 12; k++) { t = fn(rng(seed + k * 977)); if (t.q !== asli) return t; } return t; }
+  var SEEN = {};
+  /* Ambil soal yang belum pernah dibuat (cegah soal kembar). Percobaan pertama memakai benih lama sehingga ID soal yang sudah unik tidak berubah. */
+  function unik(fn, seed, sig) { for (var k = 0; k < 60; k++) { var rr = rng(seed + k * 100003), tt = fn(rr), s = sig(tt); if (!SEEN[s]) { SEEN[s] = 1; return { r: rr, t: tt }; } } throw new Error("generator: tidak dapat membuat soal unik untuk benih " + seed); }
+  var sigQ = function (t) { return t.q; }, sigFig = function (t) { return (t.g || "") + "|" + (t.op ? t.op.o : t.o).slice().sort().join("#"); };
   var out = { TIU: [], "SKB-NALAR": [] };
   function push(sub, obj) { obj.gen = true; out[sub].push(obj); }
 
@@ -87,7 +91,7 @@
       var x = ri(11, 25), y = ri(2, 6), z = ri(10, 60), ans = x + y * y * y - z;
       return { k: "sedang", q: "√" + (x * x) + " + " + y + "³ − " + z + " = …", ans: ans, c: [ans + 2 * z, x + 3 * y - z, ans + 10, ans - 6],
         l: ["√" + (x * x) + " = " + x, y + "³ = " + (y * y * y), x + " + " + (y * y * y) + " − " + z + " = " + ans],
-        cc: "Hafalkan kuadrat 11–25 dan pangkat tiga 2–6 (8, 27, 64, 125, 216). Satuan √" + (x * x) + " berakhiran " + ((x * x) % 10) + " membantu menebak akarnya.", min: -9999 };
+        cc: "Hafalkan kuadrat 11–25 dan pangkat tiga 2–6 (8, 27, 64, 125, 216). Satuan √" + (x * x) + " berakhiran " + ((x * x) % 10) + " membantu menebak akarnya.", min: ans >= 0 ? 0 : -9999 };
     },
     function (r) { // operasi campuran (urutan operasi)
       var a = ri(12, 30), b = ri(3, 9), d = ri(3, 9), c = d * ri(4, 15), e = ri(5, 40);
@@ -113,7 +117,7 @@
     }
   ];
   for (var i = 0; i < 18; i++) {
-    var r = rng(1000 + i), t = hitT[i % hitT.length](r), op = opsiAngka(r, t.ans, t.c, null, t.min);
+    var u = unik(hitT[i % hitT.length], 1000 + i, sigQ), r = u.r, t = u.t, op = opsiAngka(r, t.ans, t.c, null, t.min);
     var t2 = serupa(hitT[i % hitT.length], 5000 + i, t.q);
     push("TIU", { id: "TIU-GEN-HIT-" + pad(i + 1), t: "Numerik – Berhitung", k: t.k, q: t.q, o: op.o, a: op.a,
       p: { k: "Operasi hitung dasar: urutan operasi, pecahan, persen, akar, dan pangkat.", l: t.l, c: t.cc,
@@ -148,7 +152,7 @@
       return { k: "sulit", s: s, ans: s[4] + s[5], pola: "Setiap suku = jumlah dua suku sebelumnya (pola Fibonacci).", cc: "Jika selisihnya sama dengan suku-suku awal, curigai pola penjumlahan dua suku." }; }
   ];
   for (i = 0; i < 18; i++) {
-    r = rng(2000 + i); t = derT[i % derT.length](r);
+    u = unik(derT[i % derT.length], 2000 + i, function (x) { return x.s.join(","); }); r = u.r; t = u.t;
     var q, o;
     if (t.huruf) {
       var benar = ALFA[t.ans], pg = [t.ans + 1, t.ans - 1, t.ans + 2, t.ans - 2, t.ans + 3].filter(function (x) { return x >= 0 && x < 26; }).map(function (x) { return ALFA[x]; });
@@ -227,7 +231,7 @@
         cc: "Rata-rata baru + (jumlah data lama × kenaikan) = " + r2 + " + " + n + " × " + (r2 - rr) + " = " + x + "." }; }
   ];
   for (i = 0; i < 21; i++) {
-    r = rng(4000 + i); t = cerT[i % cerT.length](r);
+    u = unik(cerT[i % cerT.length], 4000 + i, sigQ); r = u.r; t = u.t;
     op = opsiAngka(r, t.ans, t.c);
     t2 = serupa(cerT[i % cerT.length], 7000 + i, t.q);
     push("TIU", { id: "TIU-GEN-CER-" + pad(i + 1), t: "Numerik – Soal Cerita", k: t.k, q: t.q, o: op.o, a: op.a,
@@ -296,7 +300,7 @@
     }
   ];
   for (i = 0; i < 12; i++) {
-    r = rng(8000 + i); t = serialT[i % serialT.length](r);
+    u = unik(serialT[i % serialT.length], 8000 + i, sigFig); r = u.r; t = u.t;
     push("TIU", { id: "TIU-GEN-FIGS-" + pad(i + 1), t: "Figural – Serial", k: t.k, q: "Perhatikan rangkaian gambar berikut. Gambar yang tepat untuk menggantikan tanda tanya adalah …", g: t.g, o: t.op.o, a: t.op.a,
       p: { k: "Soal serial menguji kemampuan menemukan perubahan yang berulang (rotasi, perpindahan, jumlah unsur, warna).", l: t.l, c: t.cc,
         x: { lain: "Opsi lain sesuai dengan langkah yang terlewat/berlebih atau arah putaran yang keliru." }, s: ["Jika titik berpindah searah jarum jam 90° dari kiri atas, di mana posisinya setelah 6 langkah?", "6 mod 4 = 2 → kanan bawah."] } });
@@ -334,7 +338,7 @@
     }
   ];
   for (i = 0; i < 12; i++) {
-    r = rng(9000 + i); t = anaT[i % anaT.length](r);
+    u = unik(anaT[i % anaT.length], 9000 + i, sigFig); r = u.r; t = u.t;
     push("TIU", { id: "TIU-GEN-FIGA-" + pad(i + 1), t: "Figural – Analogi", k: t.k, q: "Hubungan gambar pertama dengan gambar kedua sama dengan hubungan gambar ketiga dengan gambar …", g: t.g, o: t.op.o, a: t.op.a,
       p: { k: "Analogi figural: temukan transformasi dari gambar 1 ke gambar 2 (rotasi, cerminan, ubah warna, tambah/kurang unsur), lalu terapkan pada gambar 3.", l: t.l, c: t.cc,
         x: { lain: "Pengecoh memakai rotasi arah berlawanan, rotasi 180°, atau cerminan sebagai ganti rotasi." }, s: ["Jika panah ke atas : panah ke kanan, maka panah ke kiri : …", "Panah ke atas (rotasi 90° searah jarum jam)."] } });
@@ -361,7 +365,7 @@
     }
   ];
   for (i = 0; i < 12; i++) {
-    r = rng(9500 + i); t = ketT[i % ketT.length](r);
+    u = unik(ketT[i % ketT.length], 9500 + i, sigFig); r = u.r; t = u.t;
     push("TIU", { id: "TIU-GEN-FIGK-" + pad(i + 1), t: "Figural – Ketidaksamaan", k: t.k, q: "Gambar yang berbeda dari gambar lainnya adalah …", o: t.o, a: t.a,
       p: { k: "Ketidaksamaan figural: empat gambar memiliki aturan yang sama, satu gambar melanggarnya.", l: t.l, c: t.cc, x: { lain: "Empat opsi lainnya mengikuti aturan yang sama." },
         s: ["Empat segitiga berisi 3 titik dan satu segi empat berisi 3 titik. Mana yang berbeda bila aturannya ‘titik = sisi’?", "Segi empat (seharusnya 4 titik)."] } });
@@ -447,7 +451,7 @@
     }
   ];
   for (i = 0; i < 65; i++) {
-    r = rng(11000 + i); t = nalT[i % nalT.length](r);
+    u = unik(nalT[i % nalT.length], 11000 + i, sigQ); r = u.r; t = u.t;
     push("SKB-NALAR", { id: "SKB-GEN-NAL-" + pad(i + 1), t: "Membaca Data", k: t.k, q: t.q, o: t.o, a: t.a,
       p: { k: "Penalaran data akademik: hitung proporsi, perubahan, rata-rata berbobot, atau pembulatan kebutuhan secara tepat sebelum menyimpulkan.", l: t.l, c: t.cc,
         x: { lain: "Opsi lain adalah hasil kesalahan umum: membandingkan jumlah mutlak, membagi dengan nilai akhir, rata-rata tanpa bobot, atau pembulatan ke arah yang salah." } } });
